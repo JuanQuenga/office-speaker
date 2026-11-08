@@ -525,7 +525,8 @@ function createTray() {
 const HEADER_HEIGHT = 52;
 
 function windowBackground() {
-  return nativeTheme.shouldUseDarkColors ? "#0b0b0c" : "#f6f7f7";
+  if (isMac) return "#00000000"; // let the sidebar's vibrancy show through
+  return nativeTheme.shouldUseDarkColors ? "#0b0b0c" : "#ffffff";
 }
 
 function titleBarOverlay() {
@@ -546,18 +547,25 @@ function showWindow() {
     return;
   }
   win = new BrowserWindow({
-    width: 960,
-    height: 680,
+    width: 980,
+    height: 660,
     minWidth: 820,
-    minHeight: 580,
+    minHeight: 560,
     useContentSize: true,
     fullscreenable: false,
     title: "Office Speaker",
     show: false,
     autoHideMenuBar: true,
     backgroundColor: windowBackground(),
-    // The app's header doubles as the title bar.
-    ...(isMac && { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 18, y: 19 } }),
+    // The app draws its own title bar: traffic lights sit in the sidebar on
+    // macOS (with the native translucent sidebar material), and Windows keeps
+    // its caption buttons as an overlay on the top right.
+    ...(isMac && {
+      titleBarStyle: "hiddenInset",
+      trafficLightPosition: { x: 18, y: 19 },
+      vibrancy: "sidebar",
+      visualEffectState: "followWindow",
+    }),
     ...(isWin && { titleBarStyle: "hidden", titleBarOverlay: titleBarOverlay() }),
     icon: path.join(__dirname, "..", "assets", "icon-256.png"),
     webPreferences: {

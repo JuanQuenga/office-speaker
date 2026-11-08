@@ -10,6 +10,8 @@ It runs [Spotify Soloist](https://developer.spotify.com/documentation/soloist), 
 
 ![First-run setup](docs/screenshots/setup-light.png)
 
+![Settings](docs/screenshots/settings-light.png)
+
 ## Using it
 
 1. Install it on the computer connected to the speaker.

@@ -132,10 +132,7 @@
     @apply border-border outline-ring/50;
     }
   body {
-    @apply bg-muted/40 text-foreground antialiased select-none;
-    }
-  .dark body {
-    @apply bg-background;
+    @apply bg-sidebar text-foreground antialiased select-none;
     }
   input {
     @apply select-text;
@@ -185,4 +182,16 @@
   .animate-equalizer {
     animation: none;
   }
+}
+
+/* macOS: the window is transparent so the sidebar shows native vibrancy. */
+html[data-platform="darwin"],
+html[data-platform="darwin"] body {
+  background: transparent;
+}
+.sidebar-surface {
+  background: var(--sidebar);
+}
+html[data-platform="darwin"] .sidebar-surface {
+  background: transparent;
 }
