@@ -4,10 +4,9 @@ Turns a Mac or Windows computer into a Spotify Connect speaker. Anyone on the sa
 
 It works the same way as Music Assistant, raspotify, and spotifyd: it runs [librespot](https://github.com/librespot-org/librespot), the open-source Spotify Connect implementation, wrapped in a menu bar / tray app.
 
-<p>
-  <img src="docs/screenshots/idle-light.png" width="300" alt="Waiting for someone to pick the speaker">
-  <img src="docs/screenshots/playing-dark.png" width="300" alt="Now playing, dark mode">
-</p>
+![Waiting for someone to pick the speaker](docs/screenshots/idle-light.png)
+
+![Now playing, dark mode](docs/screenshots/playing-dark.png)
 
 ## Using it
 

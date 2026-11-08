@@ -118,6 +118,16 @@
 }
 
 @layer base {
+  :root {
+    color-scheme: light;
+    }
+  .dark {
+    color-scheme: dark;
+    }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+    }
   * {
     @apply border-border outline-ring/50;
     }

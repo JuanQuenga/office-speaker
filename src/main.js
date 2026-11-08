@@ -348,12 +348,12 @@ function showWindow() {
     return;
   }
   win = new BrowserWindow({
-    width: 400,
-    height: 540,
+    width: 940,
+    height: 680,
+    minWidth: 800,
+    minHeight: 560,
     useContentSize: true,
-    resizable: false,
     fullscreenable: false,
-    maximizable: false,
     title: "Office Speaker",
     show: false,
     autoHideMenuBar: true,
