@@ -44,6 +44,7 @@ class AppUpdater {
     const { autoUpdater } = require("electron-updater");
     this.autoUpdater = autoUpdater;
     autoUpdater.autoDownload = true;
+    autoUpdater.disableWebInstaller = true; // we only ship full installers
     autoUpdater.autoInstallOnAppQuit = false; // would surprise someone with an admin prompt on shutdown
     autoUpdater.logger = {
       info: (message) => this.log(`updater: ${message}`),

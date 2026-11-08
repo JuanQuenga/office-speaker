@@ -344,6 +344,34 @@ await section("Force-killing the app", async () => {
   check("the leftover Soloist was replaced", !after.some((pid) => orphans.includes(pid)));
 });
 
+await section("Cleaning up a stray Soloist", async () => {
+  // Windows happened to stop Soloist with the app above, so force the case the
+  // cleanup exists for: a Soloist still running on this data folder at launch.
+  killApp();
+  await waitFor(() => soloistProcesses().length === 0, 15000);
+  const stray = spawn(
+    path.join(SOLOIST_DIR, "bin", "soloist.exe"),
+    ["--device-name", "Stray", "--api-key", "ci-dummy-key", "--data-dir", path.join(SOLOIST_DIR, "data"), "--cache-dir", path.join(SOLOIST_DIR, "cache")],
+    { detached: true, stdio: "ignore", windowsHide: true },
+  );
+  stray.unref();
+  const running = await waitFor(() => soloistProcesses().some((p) => p.ProcessId === stray.pid), 15000);
+  check("the stray Soloist is running", Boolean(running), `pid ${stray.pid}`);
+  await sleep(3000); // let it write its pid file
+  check("it wrote its pid file", fs.readFileSync(path.join(SOLOIST_DIR, "data", "soloist.pid"), "utf8").trim() === String(stray.pid));
+
+  launch();
+  await connect();
+  const ready = await waitFor(async () => {
+    const state = await getState();
+    return state?.status === "ready" ? state : null;
+  }, 30000);
+  check("the app comes back Ready", Boolean(ready), ready?.status);
+  const after = soloistProcesses();
+  check("the stray Soloist was stopped", !after.some((p) => p.ProcessId === stray.pid), `stray ${stray.pid}, running ${after.map((p) => p.ProcessId)}`);
+  check("exactly one Soloist is running, and it's the app's", after.length === 1 && /CI Speaker/.test(after[0].CommandLine), `${after.length} running`);
+});
+
 await section("Installing over a running copy", async () => {
   check("the app is running first", appRunning());
   const install = run(installer, ["/S"]);
