@@ -12,12 +12,24 @@ It runs [Spotify Soloist](https://developer.spotify.com/documentation/soloist), 
 
 ![Settings](docs/screenshots/settings-light.png)
 
+![Radio](docs/screenshots/radio-light.png)
+
 ## AirPlay
 
 People with an iPhone, iPad or Mac can AirPlay to the speaker too, from Apple Music or any app. Whoever plays last takes over, whether that's AirPlay or Spotify. The window shows the song, artwork and progress, and play/pause/skip control the phone.
 
 - **Windows:** Office Speaker has a built-in AirPlay receiver (Settings → AirPlay). It's the classic AirPlay audio protocol that shairport-sync implements, using a JavaScript port of Apple's open-source ALAC decoder. It's audio only, with no multi-room sync.
 - **macOS:** use the AirPlay Receiver built into macOS (System Settings → General → AirDrop & Handoff). Set **Allow AirPlay for** to **Anyone on the same network**. Settings → AirPlay has a shortcut there.
+
+## Radio and the phone page
+
+People without Spotify or Apple Music can put on internet radio. The **Radio** page searches about 30,000 stations from [Radio Browser](https://www.radio-browser.info), a free, community-run directory, and has genre shortcuts, favorites and recently played. When a station sends song titles (ICY metadata), they show as now playing.
+
+The **phone page** is a small web page the app serves on the office network. The idle screen and Settings show a QR code for it. Anyone on the Wi-Fi can open it, with no app to install, to see what's playing and pick a station. It only offers stations from the directory, so it can't make the speaker fetch arbitrary URLs. You can turn it off in Settings.
+
+Radio, Spotify and AirPlay follow one rule: whoever plays last takes over.
+
+(YouTube isn't included. YouTube blocks most music videos in embedded players unless the player is hosted on a public website, and ripping audio from YouTube, as old Discord bots did, is against YouTube's terms.)
 
 ## Using it
 
@@ -62,6 +74,7 @@ Layout:
 - `src/main.js` is the Electron main process. It handles the tray menu, settings, and the encrypted API key. It supervises Soloist: restarts with backoff, restarts after sleep, and auto-updates. It reads playback events from Soloist's local WebSocket API.
 - `renderer/` is the window: React, Tailwind v4, and shadcn components on Base UI (`components.json`, `base-nova` style) with Hugeicons. Vite builds it to `dist-renderer/`, which Electron loads from disk. Add components with `npx shadcn@latest add <name>`.
 - `src/airplay/` is the AirPlay receiver. `raop.js` handles RTSP session control, the Apple-Challenge response, AES-encrypted RTP audio with reordering and resend requests, DMAP metadata, and DACP remote control. `alac.js` is the ALAC decoder. `output.js`, `player.*` play PCM through a Web Audio worklet in a hidden window.
+- `src/radio.js` is the Radio Browser client and the stream relay that reads ICY song titles. `src/remote.js` and `src/remote/index.html` are the phone page and its small API, which also serves the radio relay to this computer only.
 - `src/preload.js` is the bridge between the window and the main process (`window.speaker`).
 - `OFFICE_SPEAKER_SOLOIST_DIR=/path npm start` keeps Soloist, its data, and its cache in a different folder.
 - `build/installer.nsh` creates Soloist's folder under ProgramData, which users can write to. It also adds the Windows firewall rules.

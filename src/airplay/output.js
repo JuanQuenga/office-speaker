@@ -9,9 +9,10 @@ const { BrowserWindow, MessageChannelMain } = require("electron");
 const path = require("node:path");
 
 class AudioOutput {
-  constructor({ log = () => {}, onStats = () => {} } = {}) {
+  constructor({ log = () => {}, onStats = () => {}, onRadio = () => {} } = {}) {
     this.log = log;
     this.onStats = onStats;
+    this.onRadio = onRadio;
     this.window = null;
     this.port = null;
     this.ready = null;
@@ -49,6 +50,7 @@ class AudioOutput {
         const { port1, port2 } = new MessageChannelMain();
         port1.on("message", (event) => {
           if (event.data?.type === "stats") this.onStats(event.data);
+          if (event.data?.type === "radio") this.onRadio(event.data);
           if (event.data?.type === "error") this.log(`airplay: audio output error: ${event.data.message}`);
         });
         port1.start();
@@ -79,6 +81,19 @@ class AudioOutput {
   setGain(gain) {
     this.gain = gain;
     this.post({ type: "gain", value: gain });
+  }
+
+  async playRadio(url, volume) {
+    await this.open();
+    this.post({ type: "radio-play", url, volume });
+  }
+
+  stopRadio() {
+    this.post({ type: "radio-stop" });
+  }
+
+  setRadioVolume(volume) {
+    this.post({ type: "radio-volume", value: volume });
   }
 
   close() {

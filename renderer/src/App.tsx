@@ -11,10 +11,15 @@ import {
   PauseIcon,
   PlayIcon,
   PreviousIcon,
+  QrCodeIcon,
+  Radio01Icon,
   Refresh01Icon,
+  Search01Icon,
   Settings02Icon,
   SmartPhone01Icon,
   Speaker01Icon,
+  StarIcon,
+  StopIcon,
   Unlink04Icon,
   UserMultipleIcon,
   VolumeHighIcon,
@@ -29,9 +34,9 @@ import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { EngineStatus, SpeakerState } from "./speaker";
+import type { EngineStatus, SpeakerState, Station } from "./speaker";
 
-type Page = "player" | "settings";
+type Page = "player" | "radio" | "settings";
 
 const STATUS: Record<EngineStatus, { label: string; tone: string; live?: boolean }> = {
   unsupported: { label: "Not supported", tone: "bg-destructive" },
@@ -114,7 +119,13 @@ export function App() {
     <div className="flex h-screen overflow-hidden">
       <Sidebar state={state} page={page} onNavigate={setPage} />
       <main className="flex min-w-0 flex-1 flex-col border-l bg-background">
-        {page === "player" ? <Player state={state} /> : <Settings state={state} />}
+        {page === "player" ? (
+          <Player state={state} onNavigate={setPage} />
+        ) : page === "radio" ? (
+          <RadioPage state={state} />
+        ) : (
+          <Settings state={state} />
+        )}
       </main>
     </div>
   );
@@ -199,6 +210,7 @@ function Sidebar({
 
       <nav className="flex flex-col gap-0.5 px-2.5">
         <NavItem icon={Speaker01Icon} label="Now Playing" active={page === "player"} onClick={() => onNavigate("player")} />
+        <NavItem icon={Radio01Icon} label="Radio" active={page === "radio"} onClick={() => onNavigate("radio")} />
         <NavItem icon={Settings02Icon} label="Settings" active={page === "settings"} onClick={() => onNavigate("settings")} />
       </nav>
 
@@ -362,7 +374,7 @@ function Setup({ state }: { state: SpeakerState }) {
 
 /* ------------------------------------------------------------------ player */
 
-function Player({ state }: { state: SpeakerState }) {
+function Player({ state, onNavigate }: { state: SpeakerState; onNavigate: (page: Page) => void }) {
   const connected = state.status === "connected";
   const cover = connected ? state.track?.cover : null;
   return (
@@ -385,19 +397,22 @@ function Player({ state }: { state: SpeakerState }) {
           <p>{state.message}</p>
         </div>
       )}
-      {connected ? <NowPlaying state={state} /> : <Waiting state={state} />}
+      {connected ? <NowPlaying state={state} /> : <Waiting state={state} onNavigate={onNavigate} />}
     </div>
   );
 }
 
-function Waiting({ state }: { state: SpeakerState }) {
+function Waiting({ state, onNavigate }: { state: SpeakerState; onNavigate: (page: Page) => void }) {
   const busy = state.status === "starting" || state.status === "expired";
+  const picks = [...state.radio.favorites, ...state.radio.recent]
+    .filter((station, index, all) => all.findIndex((s) => s.id === station.id) === index)
+    .slice(0, 4);
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-10 pb-12 text-center">
-      <div className="grid aspect-square h-[clamp(160px,36vh,300px)] place-items-center rounded-2xl border bg-muted/50 text-muted-foreground/50">
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 overflow-y-auto px-10 pb-10 text-center">
+      <div className="grid aspect-square h-[clamp(120px,26vh,220px)] shrink-0 place-items-center rounded-2xl border bg-muted/50 text-muted-foreground/50">
         <Icon icon={busy ? Loading03Icon : Speaker01Icon} className={cn("size-12", busy && "animate-spin")} />
       </div>
-      <div className="max-w-sm">
+      <div className="max-w-md">
         <h2 className="font-heading text-2xl leading-tight font-semibold tracking-tight">
           {busy ? "Starting…" : "Not playing"}
         </h2>
@@ -406,7 +421,43 @@ function Waiting({ state }: { state: SpeakerState }) {
           <span className="font-medium text-foreground">{state.settings.name}</span>.
           {state.airplay.running && " On an iPhone you can also AirPlay to it from Apple Music or any app."}
         </p>
-        <p className="mt-3 text-xs text-muted-foreground/80">Free and Premium Spotify accounts both work.</p>
+      </div>
+
+      <div className="flex w-full max-w-xl items-stretch gap-3 text-left">
+        <div className="flex min-w-0 flex-1 flex-col gap-3 rounded-2xl border bg-card p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[13px] font-semibold">No Spotify or Apple Music?</p>
+            <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => onNavigate("radio")}>
+              Browse radio
+            </Button>
+          </div>
+          {picks.length ? (
+            <div className="grid grid-cols-2 gap-2">
+              {picks.map((station) => (
+                <button
+                  key={station.id}
+                  type="button"
+                  onClick={() => window.speaker.radioPlay(station)}
+                  className="flex min-w-0 items-center gap-2 rounded-lg border bg-background p-1.5 text-left transition-colors hover:bg-muted"
+                >
+                  <StationIcon station={station} className="size-8" />
+                  <span className="truncate text-xs font-medium">{station.name}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <Button variant="outline" className="justify-start" onClick={() => onNavigate("radio")}>
+              <Icon icon={Radio01Icon} />
+              Put on a radio station
+            </Button>
+          )}
+        </div>
+        {state.remote.qr && (
+          <div className="flex w-44 shrink-0 flex-col items-center gap-2 rounded-2xl border bg-card p-3 text-center">
+            <img src={state.remote.qr} alt="QR code for the phone page" className="size-24 rounded-md bg-white p-1" />
+            <p className="text-[11px] leading-snug text-muted-foreground">Scan to pick a station from your phone</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -475,9 +526,21 @@ function NowPlaying({ state }: { state: SpeakerState }) {
     if (!dragging.current && typeof state.volume === "number") setVolume(state.volume);
   }, [state.volume]);
 
+  const radio = state.source === "radio";
+  const station = state.radio.station;
+  const favorite = Boolean(station && state.radio.favorites.some((s) => s.id === station.id));
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-10 pb-12">
-      {track?.cover ? (
+      {radio && track?.cover ? (
+        <div className="grid aspect-square h-[clamp(160px,36vh,300px)] place-items-center rounded-2xl bg-white p-8 shadow-2xl ring-1 shadow-black/25 ring-black/10">
+          <img src={track.cover} alt="" className="max-h-full max-w-full object-contain" />
+        </div>
+      ) : radio ? (
+        <div className="grid aspect-square h-[clamp(160px,36vh,300px)] place-items-center rounded-2xl bg-muted text-muted-foreground">
+          <Icon icon={Radio01Icon} className="size-14" />
+        </div>
+      ) : track?.cover ? (
         <img
           src={track.cover}
           alt=""
@@ -499,7 +562,13 @@ function NowPlaying({ state }: { state: SpeakerState }) {
         <p className="mt-2 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
           <Equalizer playing={state.playing} />
           <span className="truncate">
-            {state.source === "airplay"
+            {radio
+              ? state.radio.status === "buffering"
+                ? "Tuning in…"
+                : state.radio.status === "paused"
+                  ? "Radio stopped"
+                  : "Live radio"
+              : state.source === "airplay"
               ? "Playing over AirPlay"
               : state.context && state.context !== track?.album
                 ? `Playing from ${state.context} on Spotify`
@@ -509,7 +578,35 @@ function NowPlaying({ state }: { state: SpeakerState }) {
       </div>
 
       <div className="flex w-full max-w-md flex-col items-center gap-4">
-        <Progress state={state} />
+        {radio ? (
+          <span className="rounded-full bg-destructive/10 px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-destructive uppercase">
+            Live
+          </span>
+        ) : (
+          <Progress state={state} />
+        )}
+        {radio && station ? (
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon-lg"
+              className={cn("size-11 rounded-full", favorite && "text-amber-500")}
+              aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+              onClick={() => window.speaker.radioFavorite(station, !favorite)}
+            >
+              <Icon icon={StarIcon} className={cn("size-5", favorite && "[&_path]:fill-current")} />
+            </Button>
+            <Button
+              size="icon-lg"
+              className="size-14 rounded-full bg-foreground text-background shadow-lg hover:bg-foreground/85"
+              aria-label={state.radio.status === "paused" ? "Play" : "Stop"}
+              onClick={() => window.speaker.command(state.radio.status === "paused" ? "play" : "pause")}
+            >
+              <Icon icon={state.radio.status === "paused" ? PlayIcon : StopIcon} className="size-6" />
+            </Button>
+            <span className="size-11" />
+          </div>
+        ) : (
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon-lg" className="size-11 rounded-full" aria-label="Previous track" onClick={() => window.speaker.command("prev")}>
             <Icon icon={PreviousIcon} className="size-5" />
@@ -526,6 +623,7 @@ function NowPlaying({ state }: { state: SpeakerState }) {
             <Icon icon={NextIcon} className="size-5" />
           </Button>
         </div>
+        )}
         <div className="flex w-full max-w-60 items-center gap-2.5 text-muted-foreground">
           <Icon icon={VolumeLowIcon} className="size-4 shrink-0" />
           <Slider
@@ -554,9 +652,202 @@ function NowPlaying({ state }: { state: SpeakerState }) {
         className="absolute right-5 bottom-4 text-muted-foreground hover:text-destructive"
         onClick={() => window.speaker.command("disconnect")}
       >
-        <Icon icon={Unlink04Icon} />
-        Disconnect listener
+        <Icon icon={radio ? StopIcon : Unlink04Icon} />
+        {radio ? "Turn off radio" : "Disconnect listener"}
       </Button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ radio */
+
+const GENRES = ["Lofi", "Pop", "Hip Hop", "Rock", "Jazz", "Electronic", "Classical", "Country", "R&B", "Latin", "Indie", "Chill", "News"];
+
+function StationIcon({ station, className }: { station: Station; className?: string }) {
+  const [broken, setBroken] = useState(false);
+  if (!station.favicon || broken) {
+    return (
+      <span className={cn("grid shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground", className)}>
+        <Icon icon={Radio01Icon} className="size-1/2" />
+      </span>
+    );
+  }
+  return (
+    <span className={cn("grid shrink-0 place-items-center overflow-hidden rounded-lg bg-white p-1 ring-1 ring-black/5", className)}>
+      <img src={station.favicon} alt="" loading="lazy" className="max-h-full max-w-full object-contain" onError={() => setBroken(true)} />
+    </span>
+  );
+}
+
+function StationRow({ station, state }: { station: Station; state: SpeakerState }) {
+  const current = state.radio.station?.id === station.id;
+  const favorite = state.radio.favorites.some((s) => s.id === station.id);
+  const details = [station.country, station.tags.slice(0, 3).join(", "), station.bitrate ? `${station.bitrate} kbps` : ""]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div
+      className={cn(
+        "group flex items-center gap-3 px-3 py-2 transition-colors hover:bg-muted/60",
+        current && "bg-primary/5",
+      )}
+    >
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none"
+        onClick={() => (current ? window.speaker.radioStop() : window.speaker.radioPlay(station))}
+      >
+        <span className="relative">
+          <StationIcon station={station} className="size-10" />
+          <span
+            className={cn(
+              "absolute inset-0 grid place-items-center rounded-lg bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100",
+              current && "opacity-100",
+            )}
+          >
+            {current && state.radio.status === "playing" ? (
+              <Equalizer playing />
+            ) : (
+              <Icon icon={current ? StopIcon : PlayIcon} className="size-4" />
+            )}
+          </span>
+        </span>
+        <span className="min-w-0">
+          <span className={cn("block truncate text-[13px] font-medium", current && "text-primary")}>{station.name}</span>
+          <span className="block truncate text-xs text-muted-foreground">{details}</span>
+        </span>
+      </button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className={cn(
+          "shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100",
+          favorite && "text-amber-500 opacity-100",
+        )}
+        aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+        onClick={() => window.speaker.radioFavorite(station, !favorite)}
+      >
+        <Icon icon={StarIcon} className={cn("size-4", favorite && "[&_path]:fill-current")} />
+      </Button>
+    </div>
+  );
+}
+
+function StationList({ title, stations, state }: { title: string; stations: Station[]; state: SpeakerState }) {
+  if (!stations.length) return null;
+  return (
+    <section>
+      <h2 className="mb-2 px-1 text-[13px] font-semibold">{title}</h2>
+      <div className="divide-y overflow-hidden rounded-xl border bg-card">
+        {stations.map((station) => (
+          <StationRow key={station.id} station={station} state={state} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RadioPage({ state }: { state: SpeakerState }) {
+  const [query, setQuery] = useState("");
+  const [genre, setGenre] = useState<string | null>(null);
+  const [results, setResults] = useState<Station[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const q = query.trim();
+    const timer = setTimeout(
+      async () => {
+        setLoading(true);
+        const result = await window.speaker.radioBrowse(q ? { q } : genre ? { tag: genre.toLowerCase() } : {});
+        if (cancelled) return;
+        setResults(result.stations);
+        setError(result.ok ? "" : result.error ?? "");
+        setLoading(false);
+      },
+      q ? 350 : 0,
+    );
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query, genre]);
+
+  const heading = query.trim() ? `Results for “${query.trim()}”` : genre ? genre : "Popular stations";
+  const browsing = !query.trim() && !genre;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PaneHeader state={state} title="Radio" />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-2xl flex-col gap-6 px-8 pt-1 pb-10">
+          <div className="flex flex-col gap-3">
+            <div className="relative">
+              <Icon icon={Search01Icon} className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search 30,000+ stations"
+                className="h-9 pl-9"
+                spellCheck={false}
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {GENRES.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    setGenre(genre === name ? null : name);
+                  }}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    genre === name && !query.trim()
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "bg-card text-foreground/80 hover:bg-muted",
+                  )}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {browsing && <StationList title="Favorites" stations={state.radio.favorites} state={state} />}
+          {browsing && (
+            <StationList
+              title="Recently played"
+              stations={state.radio.recent.filter((r) => !state.radio.favorites.some((f) => f.id === r.id)).slice(0, 5)}
+              state={state}
+            />
+          )}
+
+          <section>
+            <h2 className="mb-2 px-1 text-[13px] font-semibold">{heading}</h2>
+            {loading ? (
+              <div className="grid place-items-center rounded-xl border bg-card py-10 text-muted-foreground">
+                <Icon icon={Loading03Icon} className="size-5 animate-spin" />
+              </div>
+            ) : error ? (
+              <p className="rounded-xl border bg-card p-4 text-sm text-destructive">{error}</p>
+            ) : results.length ? (
+              <div className="divide-y overflow-hidden rounded-xl border bg-card">
+                {results.map((station) => (
+                  <StationRow key={station.id} station={station} state={state} />
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-xl border bg-card p-6 text-center text-sm text-muted-foreground">No stations found.</p>
+            )}
+          </section>
+          <p className="px-1 text-xs text-muted-foreground">
+            Stations come from <ExternalLink href="https://www.radio-browser.info">Radio Browser</ExternalLink>, a free,
+            community-run directory.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -614,12 +905,13 @@ function Settings({ state }: { state: SpeakerState }) {
     if (!savingName) setName(state.settings.name);
   }, [state.settings.name]);
 
-  const save = (patch: { name?: string; openAtLogin?: boolean; apiKey?: string; airplay?: boolean }) =>
+  const save = (patch: { name?: string; openAtLogin?: boolean; apiKey?: string; airplay?: boolean; remote?: boolean }) =>
     window.speaker.saveSettings({
       name: patch.name ?? state.settings.name,
       openAtLogin: patch.openAtLogin ?? state.settings.openAtLogin,
       apiKey: patch.apiKey,
       airplay: patch.airplay,
+      remote: patch.remote,
     });
 
   const saveName = async (event?: FormEvent) => {
@@ -717,6 +1009,28 @@ function Settings({ state }: { state: SpeakerState }) {
                   Open Settings…
                 </Button>
               </Row>
+            )}
+          </Section>
+
+          <Section
+            title="Phone page"
+            footer="Anyone on this Wi-Fi can open it to see what's playing and pick a radio station. No app needed."
+          >
+            <Row
+              label="Let phones pick radio stations"
+              htmlFor="remote"
+              description={state.remote.enabled ? state.remote.url ?? "Starting…" : "Off"}
+            >
+              <Switch id="remote" checked={state.remote.enabled} onCheckedChange={(checked) => save({ remote: checked })} />
+            </Row>
+            {state.remote.enabled && state.remote.qr && (
+              <div className="flex items-center gap-4 px-4 py-3">
+                <img src={state.remote.qr} alt="QR code for the phone page" className="size-20 rounded-md bg-white p-1" />
+                <p className="text-xs text-muted-foreground">
+                  <Icon icon={QrCodeIcon} className="mr-1 inline size-3.5 align-[-2px]" />
+                  Scan with a phone camera, or print it and stick it next to the speaker.
+                </p>
+              </div>
             )}
           </Section>
 

@@ -20,7 +20,11 @@ const crypto = require("node:crypto");
 
 const { AudioOutput, dbFromPercent, gainFromDb, percentFromDb } = require("./airplay/output");
 const { AirPlayReceiver } = require("./airplay/raop");
+const QRCode = require("qrcode");
+
 const { Announcer } = require("./announce");
+const { RadioDirectory, cleanStation, relayStream } = require("./radio");
+const { RemoteServer } = require("./remote");
 const { SoloistInstall, defaultRoot, unsupportedReason } = require("./soloist");
 
 const isMac = process.platform === "darwin";
@@ -114,6 +118,27 @@ function view() {
       position: airplayState.position,
     };
   }
+  if (radioState.active) {
+    const station = radioState.station;
+    const details = [station.country, station.tags.slice(0, 2).join(", ")].filter(Boolean).join(" · ");
+    return {
+      ...state,
+      status: "connected",
+      source: "radio",
+      playing: radioState.status === "playing",
+      track: {
+        title: radioState.title || station.name,
+        artist: radioState.title ? station.name : details,
+        album: "",
+        cover: station.favicon,
+        durationMs: 0,
+      },
+      context: "",
+      volume: settings.radioVolume ?? 70,
+      position: null,
+      message: radioState.error || state.message,
+    };
+  }
   return { ...state, source: state.status === "connected" ? "spotify" : null };
 }
 
@@ -122,6 +147,13 @@ function publicState() {
   return {
     ...view(),
     airplay: { supported: airplaySupported(), enabled: airplayEnabled(), running: Boolean(airplay) },
+    radio: {
+      station: radioState.active ? radioState.station : null,
+      status: radioState.active ? radioState.status : "idle",
+      favorites: settings.radioFavorites ?? [],
+      recent: settings.radioRecent ?? [],
+    },
+    remote: { enabled: remoteEnabled(), url: remote?.url() ?? null, qr: remoteQr.url === remote?.url() ? remoteQr.data : null },
     settings: { name: settings.name, volume: settings.volume, openAtLogin: getOpenAtLogin() },
     soloist: {
       version: meta?.version ?? null,
@@ -193,6 +225,7 @@ function handleSoloistEvent(event) {
     (event.type === "playback_changed" && event.status === "playing") ||
     (event.type === "playback_state" && event.status === "playing" && event.is_active);
   if (spotifyPlaying && airplayState.active) airplay?.disconnect();
+  if (spotifyPlaying && radioState.active) stopRadio();
 
   switch (event.type) {
     case "auth_state":
@@ -406,6 +439,7 @@ function rememberVolume(percent) {
 
 function command(name) {
   if (airplayState.active) return airplayCommand(name);
+  if (radioState.active) return radioCommand(name);
   switch (name) {
     case "play":
       return sendSoloist("play");
@@ -420,6 +454,182 @@ function command(name) {
       sendSoloist("pause");
       return restartEngine({ signOut: true });
   }
+}
+
+// ---------------------------------------------------------------- radio
+
+const directory = new RadioDirectory({ userAgent: `OfficeSpeaker/${app.getVersion()}`, log });
+const stationCache = new Map(); // id -> station, for stations picked from the phone page
+const browseCache = new Map(); // query -> { at, stations }
+
+const radioState = {
+  active: false,
+  station: null,
+  title: "", // song title from the stream, when the station sends one
+  status: "idle", // buffering | playing | paused | error
+  error: "",
+  generation: 0,
+};
+
+async function browseRadio({ q, tag }) {
+  const key = q ? `q:${q.toLowerCase()}` : tag ? `t:${tag.toLowerCase()}` : "popular";
+  const cached = browseCache.get(key);
+  if (cached && Date.now() - cached.at < 5 * 60 * 1000) return cached.stations;
+  const stations = q ? await directory.search(q) : tag ? await directory.byTag(tag) : await directory.popular();
+  for (const station of stations) stationCache.set(station.id, station);
+  browseCache.set(key, { at: Date.now(), stations });
+  return stations;
+}
+
+function knownStation(id) {
+  return (
+    stationCache.get(id) ??
+    (settings.radioFavorites ?? []).find((s) => s.id === id) ??
+    (settings.radioRecent ?? []).find((s) => s.id === id) ??
+    null
+  );
+}
+
+async function playRadio(input) {
+  const station = cleanStation(input);
+  if (!station) return { ok: false, error: "That station can't be played." };
+  if (!remote?.port) return { ok: false, error: "Radio isn't ready yet." };
+  // Radio takes over from Spotify and AirPlay.
+  sendSoloist("pause");
+  if (airplayState.active) airplay?.disconnect();
+
+  radioState.generation++;
+  Object.assign(radioState, { active: true, station, title: "", status: "buffering", error: "" });
+  settings.radioRecent = [station, ...(settings.radioRecent ?? []).filter((s) => s.id !== station.id)].slice(0, 8);
+  saveSettings();
+  directory.reportClick(station.id);
+  log(`radio: playing ${station.name}`);
+  update({});
+  await output.playRadio(
+    remote.localUrl(`/radio/stream?g=${radioState.generation}`),
+    (settings.radioVolume ?? 70) / 100,
+  );
+  return { ok: true };
+}
+
+function pauseRadio() {
+  if (!radioState.active) return;
+  output.stopRadio(); // live radio can't pause; stop and reconnect on play
+  radioState.generation++;
+  Object.assign(radioState, { status: "paused", title: "" });
+  update({});
+}
+
+function stopRadio() {
+  if (!radioState.active) return;
+  output.stopRadio();
+  radioState.generation++;
+  Object.assign(radioState, { active: false, station: null, title: "", status: "idle", error: "" });
+  update({});
+}
+
+function radioCommand(name) {
+  if (name === "play" && radioState.station) return playRadio(radioState.station);
+  if (name === "pause") return pauseRadio();
+  if (name === "disconnect") return stopRadio();
+}
+
+function handleRadioEvent(event) {
+  if (!radioState.active || radioState.status === "paused") return;
+  if (event.state === "playing") Object.assign(radioState, { status: "playing", error: "" });
+  else if (event.state === "buffering") radioState.status = "buffering";
+  else if (event.state === "error" || event.state === "ended") {
+    log(`radio: ${event.message ?? event.state}`);
+    Object.assign(radioState, { status: "error", error: "This station stopped playing. Try another one." });
+  }
+  update({});
+}
+
+/** Relays the current station to the audio window, reading song titles on the way. */
+function streamRadio(res) {
+  if (!radioState.active || radioState.status === "paused") {
+    res.writeHead(404).end();
+    return;
+  }
+  const generation = radioState.generation;
+  relayStream(radioState.station.url, res, {
+    userAgent: `OfficeSpeaker/${app.getVersion()}`,
+    onTitle: (title) => {
+      if (generation !== radioState.generation || title === radioState.title) return;
+      radioState.title = title;
+      update({});
+    },
+    onError: (message) => {
+      if (generation !== radioState.generation) return;
+      log(`radio: ${message}`);
+      Object.assign(radioState, { status: "error", error: "Couldn't reach this station. Try another one." });
+      update({});
+    },
+  });
+}
+
+// ---------------------------------------------------------------- phone page
+
+let remote = null;
+const remoteQr = { url: null, data: null };
+
+function remoteEnabled() {
+  return settings?.remote !== false;
+}
+
+/** What the phone page shows. */
+function remoteState() {
+  const current = view();
+  const playing = current.status === "connected";
+  return {
+    name: settings.name,
+    source: playing ? current.source : null,
+    playing: playing && current.playing,
+    title: playing ? current.track?.title ?? "" : "",
+    subtitle: playing ? [current.track?.artist, current.track?.album].filter(Boolean).join(" — ") : "",
+    cover: playing ? current.track?.cover ?? null : null,
+    isArtwork: current.source !== "radio",
+    stationId: radioState.active ? radioState.station.id : null,
+    airplay: Boolean(airplay),
+  };
+}
+
+async function startRemote() {
+  if (remote || quitting) return;
+  const server = new RemoteServer(
+    {
+      state: remoteState,
+      search: browseRadio,
+      play: async (id) => {
+        const station = knownStation(id);
+        return station ? playRadio(station) : { ok: false, error: "Pick a station from the list." };
+      },
+      stop: stopRadio,
+      stream: streamRadio,
+      log,
+    },
+    { lan: remoteEnabled() },
+  );
+  remote = server;
+  try {
+    await server.start();
+    const url = server.url();
+    if (url && remoteQr.url !== url) {
+      remoteQr.url = url;
+      remoteQr.data = await QRCode.toDataURL(url, { margin: 1, width: 320, color: { dark: "#111312", light: "#ffffff" } });
+    }
+  } catch (error) {
+    log(`remote: couldn't start: ${error.message}`);
+    if (remote === server) remote = null;
+  }
+  update({});
+}
+
+async function restartRemote() {
+  const server = remote;
+  remote = null;
+  await server?.stop();
+  await startRemote();
 }
 
 // ---------------------------------------------------------------- AirPlay
@@ -445,6 +655,7 @@ const airplayState = {
 
 const output = new AudioOutput({
   log,
+  onRadio: (event) => handleRadioEvent(event),
   onStats: (stats) => {
     if (!airplayState.active || stats.playing === airplayState.playing) return;
     airplayState.playing = stats.playing;
@@ -474,7 +685,8 @@ async function startAirPlay() {
 
   receiver.on("session", ({ active }) => {
     if (active) {
-      sendSoloist("pause"); // AirPlay takes over from Spotify
+      sendSoloist("pause"); // AirPlay takes over from Spotify and radio
+      stopRadio();
       Object.assign(airplayState, {
         active: true,
         playing: false,
@@ -526,7 +738,7 @@ async function stopAirPlay() {
   const receiver = airplay;
   airplay = null;
   if (receiver) await receiver.stop().catch(() => {});
-  output.close();
+  output.flush(); // the audio window stays up for radio
   if (airplayState.active) {
     Object.assign(airplayState, { active: false, playing: false, track: null, position: null });
     update({});
@@ -772,7 +984,7 @@ ipcMain.handle("seek", (_event, ms) => {
   const position = Math.max(0, Math.round(Number(ms)));
   if (!Number.isFinite(position)) return;
   if (airplayState.active) airplay?.remote(`setproperty?dacp.playingtime=${position}`);
-  else sendSoloist("seek", { position_ms: position });
+  else if (!radioState.active) sendSoloist("seek", { position_ms: position });
 });
 
 ipcMain.handle("set-volume", (_event, percent) => {
@@ -785,7 +997,33 @@ ipcMain.handle("set-volume", (_event, percent) => {
     airplayState.volume = volume;
     airplay?.remote(`setproperty?dmcp.device-volume=${db.toFixed(6)}`);
     update({});
+  } else if (radioState.active) {
+    settings.radioVolume = volume;
+    output.setRadioVolume(volume / 100);
+    clearTimeout(volumeSaveTimer);
+    volumeSaveTimer = setTimeout(saveSettings, 1500);
+    update({});
   } else sendSoloist("set_volume", { volume });
+});
+
+ipcMain.handle("radio-browse", async (_event, query) => {
+  try {
+    return { ok: true, stations: await browseRadio(query ?? {}) };
+  } catch (error) {
+    return { ok: false, error: `Couldn't load stations (${error.message})`, stations: [] };
+  }
+});
+
+ipcMain.handle("radio-play", (_event, station) => playRadio(station));
+ipcMain.handle("radio-stop", () => stopRadio());
+
+ipcMain.handle("radio-favorite", (_event, input, on) => {
+  const station = cleanStation(input);
+  if (!station) return;
+  const rest = (settings.radioFavorites ?? []).filter((s) => s.id !== station.id);
+  settings.radioFavorites = on ? [station, ...rest].slice(0, 50) : rest;
+  saveSettings();
+  update({});
 });
 
 ipcMain.handle("open-airplay-settings", () => {
@@ -827,10 +1065,13 @@ ipcMain.handle("save-settings", async (_event, next) => {
   const airplayChanged = typeof next?.airplay === "boolean" && next.airplay !== airplayEnabled();
   settings = { ...settings, name };
   if (typeof next?.airplay === "boolean") settings.airplay = next.airplay;
+  const remoteChanged = typeof next?.remote === "boolean" && next.remote !== remoteEnabled();
+  if (typeof next?.remote === "boolean") settings.remote = next.remote;
   saveSettings();
   if (apiKey) writeApiKey(apiKey);
   if (typeof next?.openAtLogin === "boolean") setOpenAtLogin(next.openAtLogin);
   if (renamed || airplayChanged) await restartAirPlay();
+  if (remoteChanged) await restartRemote();
   if (restart) await restartEngine();
   else update({});
   return { ok: true };
@@ -854,7 +1095,8 @@ app.on("before-quit", (event) => {
   if (quitting) return;
   quitting = true;
   event.preventDefault();
-  Promise.allSettled([stopEngine(), stopAirPlay()]).finally(() => app.exit(0));
+  stopRadio();
+  Promise.allSettled([stopEngine(), stopAirPlay(), remote?.stop()]).finally(() => app.exit(0));
 });
 
 app.whenReady().then(() => {
@@ -873,6 +1115,7 @@ app.whenReady().then(() => {
   createTray();
   startEngine();
   if (settings.consented) startAirPlay();
+  startRemote();
 
   const launchedHidden =
     process.argv.includes("--hidden") || app.getLoginItemSettings().wasOpenedAsHidden;
@@ -887,6 +1130,9 @@ app.whenReady().then(() => {
     setTimeout(() => {
       restartEngine();
       restartAirPlay();
+      restartRemote().then(() => {
+        if (radioState.active && radioState.status !== "paused") playRadio(radioState.station);
+      });
     }, 3000),
   );
 });

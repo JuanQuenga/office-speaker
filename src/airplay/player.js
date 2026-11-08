@@ -86,7 +86,39 @@ class PcmPlayer extends AudioWorkletProcessor {
 registerProcessor("pcm-player", PcmPlayer);
 `;
 
+// Internet radio plays through a plain <audio> element, fed by the app's local
+// stream relay (which also reads song titles out of the stream).
+function radioPlayer(port) {
+  const audio = new Audio();
+  audio.preload = "none";
+  const report = (state, extra = {}) => port.postMessage({ type: "radio", state, ...extra });
+  audio.addEventListener("playing", () => report("playing"));
+  audio.addEventListener("waiting", () => report("buffering"));
+  audio.addEventListener("stalled", () => report("buffering"));
+  audio.addEventListener("ended", () => report("ended"));
+  audio.addEventListener("error", () => {
+    if (audio.getAttribute("src")) report("error", { message: audio.error?.message || "The stream couldn't be played" });
+  });
+  return {
+    play(url, volume) {
+      audio.volume = volume;
+      audio.src = url;
+      audio.play().catch((error) => report("error", { message: String(error?.message ?? error) }));
+      report("buffering");
+    },
+    stop() {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    },
+    volume(value) {
+      audio.volume = value;
+    },
+  };
+}
+
 async function start(port) {
+  const radio = radioPlayer(port);
   try {
     const context = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: "playback" });
     const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
@@ -96,6 +128,9 @@ async function start(port) {
     node.port.onmessage = (event) => port.postMessage(event.data);
     port.onmessage = (event) => {
       const message = event.data;
+      if (message.type === "radio-play") return radio.play(message.url, message.volume);
+      if (message.type === "radio-stop") return radio.stop();
+      if (message.type === "radio-volume") return radio.volume(message.value);
       if (context.state !== "running") context.resume();
       if (message.type === "pcm") node.port.postMessage(message, [message.pcm.buffer]);
       else node.port.postMessage(message);

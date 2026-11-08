@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Office Speaker</title>
+    <style>
+      :root {
+        --bg: #f6f7f7;
+        --card: #ffffff;
+        --text: #111312;
+        --muted: #6b716f;
+        --line: #e6e8e7;
+        --accent: #0f9b77;
+        --accent-text: #ffffff;
+        --chip: #eef1f0;
+        --danger: #d1453b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b0c0c;
+          --card: #161818;
+          --text: #eef1f0;
+          --muted: #8d9592;
+          --line: #262a29;
+          --accent: #3fd6aa;
+          --accent-text: #06231b;
+          --chip: #1f2322;
+          --danger: #ff7b70;
+        }
+      }
+      [hidden] {
+        display: none !important;
+      }
+      * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+      }
+      main {
+        max-width: 520px;
+        margin: 0 auto;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 4px 2px 16px;
+      }
+      header .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+      header .dot.live {
+        background: var(--accent);
+      }
+      header h1 {
+        font-size: 17px;
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+      header p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .now {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 14px;
+      }
+      .cover {
+        width: 72px;
+        height: 72px;
+        border-radius: 12px;
+        background: var(--chip);
+        object-fit: cover;
+        flex: none;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        font-size: 26px;
+      }
+      img.cover.logo {
+        object-fit: contain;
+        background: #fff;
+        padding: 8px;
+      }
+      .meta {
+        min-width: 0;
+        flex: 1;
+      }
+      .meta .title {
+        font-weight: 650;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .meta .sub {
+        color: var(--muted);
+        font-size: 13px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .pill {
+        display: inline-block;
+        margin-top: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 99px;
+        background: var(--chip);
+        color: var(--muted);
+      }
+      button.stop {
+        border: 0;
+        background: var(--chip);
+        color: var(--danger);
+        font: inherit;
+        font-weight: 600;
+        border-radius: 99px;
+        padding: 8px 14px;
+      }
+      h2 {
+        font-size: 13px;
+        margin: 22px 2px 10px;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 10px 4px 0;
+      }
+      .search {
+        width: 100%;
+        font: inherit;
+        color: var(--text);
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 11px 14px;
+        outline: none;
+      }
+      .search:focus {
+        border-color: var(--accent);
+      }
+      .chips {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        padding: 10px 0 2px;
+        scrollbar-width: none;
+      }
+      .chips button {
+        flex: none;
+        border: 0;
+        font: inherit;
+        font-size: 13px;
+        padding: 6px 12px;
+        border-radius: 99px;
+        background: var(--chip);
+        color: var(--text);
+      }
+      .chips button.on {
+        background: var(--accent);
+        color: var(--accent-text);
+      }
+      .list {
+        margin-top: 10px;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .row {
+        display: flex;
+        width: 100%;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        border: 0;
+        border-bottom: 1px solid var(--line);
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+      }
+      .row:last-child {
+        border-bottom: 0;
+      }
+      .row:active {
+        background: var(--chip);
+      }
+      .row img,
+      .row .ph {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        flex: none;
+        object-fit: contain;
+        background: #fff;
+      }
+      .row .ph {
+        background: var(--chip);
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+      }
+      .row.current .name {
+        color: var(--accent);
+      }
+      .row .name {
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .row .info {
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .empty {
+        padding: 18px;
+        color: var(--muted);
+        text-align: center;
+      }
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: max(20px, env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        background: var(--text);
+        color: var(--bg);
+        padding: 9px 16px;
+        border-radius: 99px;
+        font-size: 13px;
+        opacity: 0;
+        transition: opacity 0.2s;
+        pointer-events: none;
+      }
+      .toast.show {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="dot" id="dot"></span>
+        <div>
+          <h1 id="name">Office Speaker</h1>
+          <p id="status">Connecting…</p>
+        </div>
+      </header>
+
+      <section class="now">
+        <div class="cover" id="cover">♪</div>
+        <div class="meta">
+          <div class="title" id="title">Not playing</div>
+          <div class="sub" id="sub"></div>
+          <span class="pill" id="source" hidden></span>
+        </div>
+        <button class="stop" id="stop" hidden>Stop</button>
+      </section>
+      <p class="hint" id="hint"></p>
+
+      <h2>Radio</h2>
+      <input class="search" id="search" type="search" placeholder="Search stations" autocomplete="off" />
+      <div class="chips" id="chips"></div>
+      <div class="list" id="list"><div class="empty">Loading stations…</div></div>
+    </main>
+    <div class="toast" id="toast"></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const GENRES = ["Popular", "Lofi", "Pop", "Hip Hop", "Rock", "Jazz", "Electronic", "Classical", "Country", "R&B", "Latin", "Indie", "Chill", "News"];
+      let current = null;
+      let active = "Popular";
+
+      function el(tag, props = {}, children = []) {
+        const node = Object.assign(document.createElement(tag), props);
+        for (const child of [].concat(children)) node.append(child);
+        return node;
+      }
+
+      function toast(text) {
+        const t = $("toast");
+        t.textContent = text;
+        t.classList.add("show");
+        clearTimeout(t.timer);
+        t.timer = setTimeout(() => t.classList.remove("show"), 2200);
+      }
+
+      async function refresh() {
+        try {
+          const s = await (await fetch("/api/state", { cache: "no-store" })).json();
+          current = s;
+          document.title = s.name;
+          $("name").textContent = s.name;
+          $("dot").className = "dot" + (s.playing ? " live" : "");
+          $("status").textContent = s.playing ? "Playing" : s.source ? "Paused" : "Not playing";
+          $("title").textContent = s.title || "Not playing";
+          $("sub").textContent = s.subtitle || "";
+          const labels = { spotify: "Spotify", airplay: "AirPlay", radio: "Radio" };
+          $("source").hidden = !s.source;
+          $("source").textContent = s.source === "radio" ? "Live radio" : labels[s.source] || "";
+          $("stop").hidden = s.source !== "radio";
+          const cover = $("cover");
+          if (s.cover) {
+            const img = el("img", { className: "cover" + (s.source === "radio" && !s.isArtwork ? " logo" : ""), src: s.cover, alt: "" });
+            img.id = "cover";
+            cover.replaceWith(img);
+          } else if (cover.tagName === "IMG") {
+            const div = el("div", { className: "cover", textContent: "♪" });
+            div.id = "cover";
+            cover.replaceWith(div);
+          }
+          $("hint").textContent = s.source
+            ? ""
+            : `To play your own music, pick “${s.name}” in Spotify's devices list${s.airplay ? " or AirPlay to it from your iPhone" : ""}.`;
+          markCurrent();
+        } catch {
+          $("status").textContent = "Can't reach the speaker";
+        }
+      }
+
+      function markCurrent() {
+        for (const row of document.querySelectorAll(".row")) {
+          row.classList.toggle("current", current?.stationId === row.dataset.id);
+        }
+      }
+
+      async function load(params) {
+        $("list").replaceChildren(el("div", { className: "empty", textContent: "Loading stations…" }));
+        try {
+          const query = new URLSearchParams(params).toString();
+          const { stations } = await (await fetch("/api/radio?" + query)).json();
+          if (!stations.length) {
+            $("list").replaceChildren(el("div", { className: "empty", textContent: "No stations found." }));
+            return;
+          }
+          $("list").replaceChildren(
+            ...stations.map((s) => {
+              const icon = s.favicon ? el("img", { src: s.favicon, alt: "", loading: "lazy", onerror() { this.replaceWith(el("div", { className: "ph", textContent: "📻" })); } }) : el("div", { className: "ph", textContent: "📻" });
+              const info = [s.country, s.tags.slice(0, 2).join(", ")].filter(Boolean).join(" · ");
+              const row = el("button", { className: "row", onclick: () => play(s) }, [
+                icon,
+                el("div", { style: "min-width:0" }, [el("div", { className: "name", textContent: s.name }), el("div", { className: "info", textContent: info })]),
+              ]);
+              row.dataset.id = s.id;
+              return row;
+            }),
+          );
+          markCurrent();
+        } catch {
+          $("list").replaceChildren(el("div", { className: "empty", textContent: "Couldn't load stations." }));
+        }
+      }
+
+      async function play(station) {
+        toast(`Tuning in to ${station.name}…`);
+        const res = await fetch("/api/radio/play", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: station.id }) });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) toast(body.error || "Couldn't play that station");
+        setTimeout(refresh, 600);
+      }
+
+      $("stop").onclick = async () => {
+        await fetch("/api/stop", { method: "POST" });
+        refresh();
+      };
+
+      $("chips").replaceChildren(
+        ...GENRES.map((g) =>
+          el("button", {
+            textContent: g,
+            className: g === active ? "on" : "",
+            onclick() {
+              active = g;
+              $("search").value = "";
+              for (const b of $("chips").children) b.classList.toggle("on", b.textContent === g);
+              load(g === "Popular" ? {} : { tag: g.toLowerCase() });
+            },
+          }),
+        ),
+      );
+
+      let searchTimer;
+      $("search").addEventListener("input", (event) => {
+        clearTimeout(searchTimer);
+        const q = event.target.value.trim();
+        searchTimer = setTimeout(() => {
+          for (const b of $("chips").children) b.classList.remove("on");
+          load(q ? { q } : {});
+        }, 350);
+      });
+
+      refresh();
+      load({});
+      setInterval(refresh, 3000);
+    </script>
+  </body>
+</html>

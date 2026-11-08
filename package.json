@@ -1,7 +1,7 @@
 {
   "name": "office-speaker",
   "productName": "Office Speaker",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Turns this computer into a Spotify Connect speaker anyone on the network can play to, using Spotify Soloist.",
   "main": "src/main.js",
   "private": true,
@@ -82,6 +82,7 @@
     }
   },
   "dependencies": {
-    "bonjour-service": "^1.4.4"
+    "bonjour-service": "^1.4.4",
+    "qrcode": "^1.5.4"
   }
 }

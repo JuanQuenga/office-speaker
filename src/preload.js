@@ -14,5 +14,9 @@ contextBridge.exposeInMainWorld("speaker", {
   saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
   checkUpdates: () => ipcRenderer.invoke("check-updates"),
   openAirPlaySettings: () => ipcRenderer.invoke("open-airplay-settings"),
+  radioBrowse: (query) => ipcRenderer.invoke("radio-browse", query),
+  radioPlay: (station) => ipcRenderer.invoke("radio-play", station),
+  radioStop: () => ipcRenderer.invoke("radio-stop"),
+  radioFavorite: (station, on) => ipcRenderer.invoke("radio-favorite", station, on),
   copyLogs: () => ipcRenderer.invoke("copy-logs"),
 });

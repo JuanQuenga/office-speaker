@@ -8,6 +8,19 @@ export type EngineStatus =
   | "expired"
   | "error";
 
+export interface Station {
+  id: string;
+  name: string;
+  url: string;
+  favicon: string | null;
+  homepage: string | null;
+  country: string;
+  countryCode: string;
+  tags: string[];
+  codec: string;
+  bitrate: number;
+}
+
 export interface Track {
   title: string;
   artist: string;
@@ -28,7 +41,14 @@ export interface SpeakerState {
   settings: { name: string; volume: number; openAtLogin: boolean };
   soloist: { version: string | null; buildDate: string | null; daysLeft: number | null };
   hasApiKey: boolean;
-  source: "spotify" | "airplay" | null;
+  source: "spotify" | "airplay" | "radio" | null;
+  radio: {
+    station: Station | null;
+    status: "idle" | "buffering" | "playing" | "paused" | "error";
+    favorites: Station[];
+    recent: Station[];
+  };
+  remote: { enabled: boolean; url: string | null; qr: string | null };
   airplay: { supported: boolean; enabled: boolean; running: boolean };
   packaged: boolean;
   platform: string;
@@ -51,7 +71,12 @@ declare global {
         openAtLogin: boolean;
         apiKey?: string;
         airplay?: boolean;
+        remote?: boolean;
       }): Promise<Result>;
+      radioBrowse(query: { q?: string; tag?: string }): Promise<{ ok: boolean; error?: string; stations: Station[] }>;
+      radioPlay(station: Station): Promise<Result>;
+      radioStop(): Promise<void>;
+      radioFavorite(station: Station, on: boolean): Promise<void>;
       openAirPlaySettings(): Promise<void>;
       checkUpdates(): Promise<string>;
       copyLogs(): Promise<void>;
