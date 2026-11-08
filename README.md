@@ -1,8 +1,18 @@
 # Office Speaker
 
-Turns a Mac or Windows computer into a Spotify Connect speaker. Anyone on the same network opens Spotify on their phone, taps the devices icon, and picks the computer. Nobody signs in to Spotify on the computer. Audio plays through the computer's sound output, so a Bluetooth speaker paired to the computer works.
+Turns a Mac or Windows computer into a speaker anyone in the office can play to. Pair a Bluetooth speaker with the computer, run Office Speaker, and people play from their own phones:
 
-It runs [Spotify Soloist](https://developer.spotify.com/documentation/soloist), Spotify's official headless player, wrapped in a menu bar / tray app. (Version 0.1 used librespot, which stopped working for Spotify accounts created after late 2024.)
+- **Spotify:** pick the speaker in Spotify's devices list. Nobody signs in on the computer, and Free and Premium accounts both work.
+- **AirPlay:** play from Apple Music or any app on an iPhone, iPad or Mac.
+- **Radio:** no account needed. Search about 30,000 internet radio stations in the app, or from a phone via a QR code.
+
+Whoever plays last takes over, like a normal speaker.
+
+**[Download the latest release](https://github.com/JuanQuenga/office-speaker/releases/latest)** for Apple Silicon Macs (`.dmg`) or Windows (`.exe`).
+
+For Spotify it runs [Spotify Soloist](https://developer.spotify.com/documentation/soloist), Spotify's official headless player, wrapped in a menu bar / tray app. (Version 0.1 used librespot, which stopped working for Spotify accounts created after late 2024.)
+
+Office Speaker isn't affiliated with or endorsed by Spotify or Apple.
 
 ![Waiting for someone to pick the speaker](docs/screenshots/idle-light.png)
 
@@ -52,10 +62,17 @@ Whoever picks the speaker last takes over, like a normal Connect speaker. People
 
 ## Installing builds
 
-GitHub Actions builds an Apple Silicon DMG and a Windows installer on every push. Pushing a `v*` tag also attaches them to a GitHub release. The builds aren't code-signed yet:
+Download the `.dmg` (Apple Silicon Mac) or `.exe` (Windows) from [Releases](https://github.com/JuanQuenga/office-speaker/releases). GitHub Actions builds both on every push and attaches them to a release when a `v*` tag is pushed. The builds aren't code-signed yet:
 
 - **macOS:** open the app, dismiss the warning, then go to System Settings → Privacy & Security → **Open Anyway**. Allow **Local Network** access when asked.
 - **Windows:** SmartScreen shows "Windows protected your PC". Click **More info** → **Run anyway**. The installer asks for admin rights so it can add firewall rules.
+
+## Privacy and network
+
+- **Listening on the network:** Office Speaker listens on the local network for Spotify Connect (through Soloist), AirPlay (Windows, port 5000 when free), and the phone page (port 7979 when free). You can turn off AirPlay and the phone page in Settings.
+- **Outbound connections:** it only talks to Spotify (Soloist downloads and updates), Radio Browser (station search), and the radio stations you play.
+- **The Soloist API key:** stored encrypted with the OS keychain. It's passed to Soloist on its command line, because that's the only way Soloist accepts it ([spotify/soloist#12](https://github.com/spotify/soloist/issues/12)). That means other users on the same computer could see it in a process list.
+- **Nothing else leaves the computer:** no analytics, telemetry or accounts.
 
 ## Development
 
