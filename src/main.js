@@ -16,6 +16,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
 
+const crypto = require("node:crypto");
+
+const { AudioOutput, dbFromPercent, gainFromDb, percentFromDb } = require("./airplay/output");
+const { AirPlayReceiver } = require("./airplay/raop");
 const { Announcer } = require("./announce");
 const { SoloistInstall, defaultRoot, unsupportedReason } = require("./soloist");
 
@@ -96,10 +100,28 @@ const state = {
   position: null,
 };
 
+/** What the window and tray show: an active AirPlay session takes over the player. */
+function view() {
+  if (airplayState.active) {
+    return {
+      ...state,
+      status: "connected",
+      source: "airplay",
+      playing: airplayState.playing,
+      track: airplayState.track,
+      context: "",
+      volume: airplayState.volume,
+      position: airplayState.position,
+    };
+  }
+  return { ...state, source: state.status === "connected" ? "spotify" : null };
+}
+
 function publicState() {
   const meta = install?.meta();
   return {
-    ...state,
+    ...view(),
+    airplay: { supported: airplaySupported(), enabled: airplayEnabled(), running: Boolean(airplay) },
     settings: { name: settings.name, volume: settings.volume, openAtLogin: getOpenAtLogin() },
     soloist: {
       version: meta?.version ?? null,
@@ -166,6 +188,12 @@ function contextName(context) {
 }
 
 function handleSoloistEvent(event) {
+  // Someone started Spotify while an AirPlay sender was playing: Spotify wins.
+  const spotifyPlaying =
+    (event.type === "playback_changed" && event.status === "playing") ||
+    (event.type === "playback_state" && event.status === "playing" && event.is_active);
+  if (spotifyPlaying && airplayState.active) airplay?.disconnect();
+
   switch (event.type) {
     case "auth_state":
       if (!event.logged_in) {
@@ -377,6 +405,7 @@ function rememberVolume(percent) {
 }
 
 function command(name) {
+  if (airplayState.active) return airplayCommand(name);
   switch (name) {
     case "play":
       return sendSoloist("play");
@@ -390,6 +419,137 @@ function command(name) {
       // Soloist has no logout command: clear its stored session and restart.
       sendSoloist("pause");
       return restartEngine({ signOut: true });
+  }
+}
+
+// ---------------------------------------------------------------- AirPlay
+
+// macOS has its own AirPlay Receiver (System Settings > General > AirDrop &
+// Handoff), so the built-in receiver only runs elsewhere, mainly Windows.
+function airplaySupported() {
+  return !isMac;
+}
+
+function airplayEnabled() {
+  return airplaySupported() && settings?.airplay !== false;
+}
+
+let airplay = null;
+const airplayState = {
+  active: false,
+  playing: false,
+  track: null,
+  volume: null,
+  position: null,
+};
+
+const output = new AudioOutput({
+  log,
+  onStats: (stats) => {
+    if (!airplayState.active || stats.playing === airplayState.playing) return;
+    airplayState.playing = stats.playing;
+    // Freeze or resume the progress bar along with the audio.
+    if (airplayState.position) {
+      const p = airplayState.position;
+      const ms = p.speed ? p.ms + (Date.now() - p.at) : p.ms;
+      airplayState.position = { ms, at: Date.now(), speed: stats.playing ? 1 : 0 };
+    }
+    update({});
+  },
+});
+
+function hardwareId() {
+  // Senders treat this as the receiver's MAC address; keep it stable.
+  if (!/^[0-9a-f]{12}$/i.test(settings.airplayId ?? "")) {
+    settings.airplayId = crypto.randomBytes(6).toString("hex");
+    saveSettings();
+  }
+  return settings.airplayId;
+}
+
+async function startAirPlay() {
+  if (airplay || !airplayEnabled() || quitting) return;
+  const receiver = new AirPlayReceiver({ name: settings.name, hardwareId: hardwareId(), log });
+  airplay = receiver;
+
+  receiver.on("session", ({ active }) => {
+    if (active) {
+      sendSoloist("pause"); // AirPlay takes over from Spotify
+      Object.assign(airplayState, {
+        active: true,
+        playing: false,
+        track: { title: "AirPlay", artist: "", album: "", cover: null, durationMs: 0 },
+        position: null,
+      });
+      output.open();
+      log("airplay: session started");
+    } else {
+      output.flush();
+      Object.assign(airplayState, { active: false, playing: false, track: null, position: null });
+      // Bring back whatever Spotify was showing.
+      sendSoloist("get_auth_state");
+      sendSoloist("get_state");
+    }
+    update({});
+  });
+  receiver.on("audio", (pcm) => output.write(pcm));
+  receiver.on("flush", () => output.flush());
+  receiver.on("volume", (db) => {
+    output.setGain(gainFromDb(db));
+    airplayState.volume = percentFromDb(db);
+    update({});
+  });
+  receiver.on("metadata", ({ title, artist, album }) => {
+    airplayState.track = { ...(airplayState.track ?? {}), title: title || "AirPlay", artist, album };
+    update({});
+  });
+  receiver.on("artwork", (cover) => {
+    airplayState.track = { ...(airplayState.track ?? { title: "AirPlay", artist: "", album: "" }), cover };
+    update({});
+  });
+  receiver.on("progress", ({ positionMs, durationMs }) => {
+    airplayState.track = { ...(airplayState.track ?? { title: "AirPlay", artist: "", album: "" }), durationMs };
+    airplayState.position = { ms: positionMs, at: Date.now(), speed: airplayState.playing ? 1 : 0 };
+    update({});
+  });
+
+  try {
+    await receiver.start();
+  } catch (error) {
+    log(`airplay: couldn't start: ${error.message}`);
+    if (airplay === receiver) airplay = null;
+  }
+  update({});
+}
+
+async function stopAirPlay() {
+  const receiver = airplay;
+  airplay = null;
+  if (receiver) await receiver.stop().catch(() => {});
+  output.close();
+  if (airplayState.active) {
+    Object.assign(airplayState, { active: false, playing: false, track: null, position: null });
+    update({});
+  }
+}
+
+async function restartAirPlay() {
+  await stopAirPlay();
+  await startAirPlay();
+}
+
+function airplayCommand(name) {
+  switch (name) {
+    case "play":
+      return airplay?.remote("play");
+    case "pause":
+      return airplay?.remote("pause");
+    case "next":
+      return airplay?.remote("nextitem");
+    case "prev":
+      return airplay?.remote("previtem");
+    case "disconnect":
+      return airplay?.disconnect();
   }
 }
 
@@ -454,6 +614,7 @@ function setOpenAtLogin(enabled) {
 // ---------------------------------------------------------------- UI
 
 function statusLine() {
+  const state = view();
   switch (state.status) {
     case "setup":
       return "Needs setup";
@@ -464,7 +625,10 @@ function statusLine() {
     case "ready":
       return `Ready as “${settings.name}”`;
     case "connected":
-      if (state.track) return `${state.playing ? "▶" : "❚❚"} ${state.track.title} — ${state.track.artist}`;
+      if (state.track) {
+        const by = state.track.artist ? ` — ${state.track.artist}` : "";
+        return `${state.playing ? "▶" : "❚❚"} ${state.track.title}${by}`;
+      }
       return "Connected";
     case "expired":
       return "Updating Spotify Soloist…";
@@ -486,6 +650,7 @@ function trayImage() {
 
 function refreshTray() {
   if (!tray) return;
+  const state = view();
   const connected = state.status === "connected";
   const template = [
     { label: statusLine(), enabled: false },
@@ -605,12 +770,27 @@ ipcMain.handle("command", (_event, name) => {
 
 ipcMain.handle("seek", (_event, ms) => {
   const position = Math.max(0, Math.round(Number(ms)));
-  if (Number.isFinite(position)) sendSoloist("seek", { position_ms: position });
+  if (!Number.isFinite(position)) return;
+  if (airplayState.active) airplay?.remote(`setproperty?dacp.playingtime=${position}`);
+  else sendSoloist("seek", { position_ms: position });
 });
 
 ipcMain.handle("set-volume", (_event, percent) => {
   const volume = Math.max(0, Math.min(100, Math.round(Number(percent))));
-  if (Number.isFinite(volume)) sendSoloist("set_volume", { volume });
+  if (!Number.isFinite(volume)) return;
+  if (airplayState.active) {
+    // Adjust locally right away, and tell the phone so its slider follows.
+    const db = dbFromPercent(volume);
+    output.setGain(gainFromDb(db));
+    airplayState.volume = volume;
+    airplay?.remote(`setproperty?dmcp.device-volume=${db.toFixed(6)}`);
+    update({});
+  } else sendSoloist("set_volume", { volume });
+});
+
+ipcMain.handle("open-airplay-settings", () => {
+  // macOS's own AirPlay Receiver lives under General > AirDrop & Handoff.
+  if (isMac) shell.openExternal("x-apple.systempreferences:com.apple.AirDrop-Handoff-Settings.extension");
 });
 
 ipcMain.handle("setup", async (_event, input) => {
@@ -634,6 +814,7 @@ ipcMain.handle("setup", async (_event, input) => {
   }
   update({ progress: "" });
   await restartEngine({ signOut: true });
+  startAirPlay();
   return { ok: true };
 });
 
@@ -641,11 +822,15 @@ ipcMain.handle("save-settings", async (_event, next) => {
   const name = cleanName(next?.name);
   if (!name) return { ok: false, error: "Give the speaker a name." };
   const apiKey = cleanKey(next?.apiKey);
-  const restart = name !== settings.name || Boolean(apiKey);
+  const renamed = name !== settings.name;
+  const restart = renamed || Boolean(apiKey);
+  const airplayChanged = typeof next?.airplay === "boolean" && next.airplay !== airplayEnabled();
   settings = { ...settings, name };
+  if (typeof next?.airplay === "boolean") settings.airplay = next.airplay;
   saveSettings();
   if (apiKey) writeApiKey(apiKey);
   if (typeof next?.openAtLogin === "boolean") setOpenAtLogin(next.openAtLogin);
+  if (renamed || airplayChanged) await restartAirPlay();
   if (restart) await restartEngine();
   else update({});
   return { ok: true };
@@ -669,7 +854,7 @@ app.on("before-quit", (event) => {
   if (quitting) return;
   quitting = true;
   event.preventDefault();
-  stopEngine().finally(() => app.exit(0));
+  Promise.allSettled([stopEngine(), stopAirPlay()]).finally(() => app.exit(0));
 });
 
 app.whenReady().then(() => {
@@ -687,6 +872,7 @@ app.whenReady().then(() => {
   }
   createTray();
   startEngine();
+  if (settings.consented) startAirPlay();
 
   const launchedHidden =
     process.argv.includes("--hidden") || app.getLoginItemSettings().wasOpenedAsHidden;
@@ -697,5 +883,10 @@ app.whenReady().then(() => {
   setInterval(() => checkForUpdates(), UPDATE_CHECK_MS);
 
   // Network sockets and Spotify sessions don't survive sleep well; start fresh.
-  powerMonitor.on("resume", () => setTimeout(() => restartEngine(), 3000));
+  powerMonitor.on("resume", () =>
+    setTimeout(() => {
+      restartEngine();
+      restartAirPlay();
+    }, 3000),
+  );
 });

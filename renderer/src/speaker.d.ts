@@ -28,6 +28,8 @@ export interface SpeakerState {
   settings: { name: string; volume: number; openAtLogin: boolean };
   soloist: { version: string | null; buildDate: string | null; daysLeft: number | null };
   hasApiKey: boolean;
+  source: "spotify" | "airplay" | null;
+  airplay: { supported: boolean; enabled: boolean; running: boolean };
   packaged: boolean;
   platform: string;
   version: string;
@@ -44,7 +46,13 @@ declare global {
       setVolume(percent: number): Promise<void>;
       seek(ms: number): Promise<void>;
       setup(input: { apiKey: string; name: string; consent: boolean }): Promise<Result>;
-      saveSettings(settings: { name: string; openAtLogin: boolean; apiKey?: string }): Promise<Result>;
+      saveSettings(settings: {
+        name: string;
+        openAtLogin: boolean;
+        apiKey?: string;
+        airplay?: boolean;
+      }): Promise<Result>;
+      openAirPlaySettings(): Promise<void>;
       checkUpdates(): Promise<string>;
       copyLogs(): Promise<void>;
     };

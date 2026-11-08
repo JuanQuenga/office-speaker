@@ -404,8 +404,9 @@ function Waiting({ state }: { state: SpeakerState }) {
         <p className="mt-2 text-sm text-muted-foreground">
           On a phone on this Wi-Fi, open Spotify, tap the devices icon, and pick{" "}
           <span className="font-medium text-foreground">{state.settings.name}</span>.
+          {state.airplay.running && " On an iPhone you can also AirPlay to it from Apple Music or any app."}
         </p>
-        <p className="mt-3 text-xs text-muted-foreground/80">Free and Premium accounts both work.</p>
+        <p className="mt-3 text-xs text-muted-foreground/80">Free and Premium Spotify accounts both work.</p>
       </div>
     </div>
   );
@@ -495,12 +496,16 @@ function NowPlaying({ state }: { state: SpeakerState }) {
         <p className="mt-1 truncate text-sm text-foreground/75">
           {[track?.artist, track?.album].filter(Boolean).join(" — ")}
         </p>
-        {state.context && state.context !== track?.album && (
-          <p className="mt-2 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-            <Equalizer playing={state.playing} />
-            <span className="truncate">Playing from {state.context}</span>
-          </p>
-        )}
+        <p className="mt-2 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+          <Equalizer playing={state.playing} />
+          <span className="truncate">
+            {state.source === "airplay"
+              ? "Playing over AirPlay"
+              : state.context && state.context !== track?.album
+                ? `Playing from ${state.context} on Spotify`
+                : "Playing on Spotify"}
+          </span>
+        </p>
       </div>
 
       <div className="flex w-full max-w-md flex-col items-center gap-4">
@@ -609,11 +614,12 @@ function Settings({ state }: { state: SpeakerState }) {
     if (!savingName) setName(state.settings.name);
   }, [state.settings.name]);
 
-  const save = (patch: { name?: string; openAtLogin?: boolean; apiKey?: string }) =>
+  const save = (patch: { name?: string; openAtLogin?: boolean; apiKey?: string; airplay?: boolean }) =>
     window.speaker.saveSettings({
       name: patch.name ?? state.settings.name,
       openAtLogin: patch.openAtLogin ?? state.settings.openAtLogin,
       apiKey: patch.apiKey,
+      airplay: patch.airplay,
     });
 
   const saveName = async (event?: FormEvent) => {
@@ -677,6 +683,41 @@ function Settings({ state }: { state: SpeakerState }) {
                 onCheckedChange={(checked) => save({ openAtLogin: checked })}
               />
             </Row>
+          </Section>
+
+          <Section
+            title="AirPlay"
+            footer={
+              state.airplay.supported
+                ? "People with an iPhone, iPad or Mac can play here from Apple Music or any app. Whoever plays last takes over, whether that's AirPlay or Spotify."
+                : "Macs have an AirPlay receiver built in. Turn on AirPlay Receiver and set Allow AirPlay for to Anyone on the same network. Its name is this Mac's name."
+            }
+          >
+            {state.airplay.supported ? (
+              <Row
+                label="AirPlay receiver"
+                htmlFor="airplay"
+                description={
+                  state.airplay.enabled
+                    ? state.airplay.running
+                      ? `Visible as ${state.settings.name}`
+                      : "Starting…"
+                    : "Off"
+                }
+              >
+                <Switch
+                  id="airplay"
+                  checked={state.airplay.enabled}
+                  onCheckedChange={(checked) => save({ airplay: checked })}
+                />
+              </Row>
+            ) : (
+              <Row label="AirPlay receiver" description="Built into macOS">
+                <Button type="button" variant="outline" size="sm" onClick={() => window.speaker.openAirPlaySettings()}>
+                  Open Settings…
+                </Button>
+              </Row>
+            )}
           </Section>
 
           <Section

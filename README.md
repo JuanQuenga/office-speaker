@@ -12,6 +12,13 @@ It runs [Spotify Soloist](https://developer.spotify.com/documentation/soloist), 
 
 ![Settings](docs/screenshots/settings-light.png)
 
+## AirPlay
+
+People with an iPhone, iPad or Mac can AirPlay to the speaker too, from Apple Music or any app. Whoever plays last takes over, whether that's AirPlay or Spotify. The window shows the song, artwork and progress, and play/pause/skip control the phone.
+
+- **Windows:** Office Speaker has a built-in AirPlay receiver (Settings → AirPlay). It's the classic AirPlay audio protocol that shairport-sync implements, using a JavaScript port of Apple's open-source ALAC decoder. It's audio only, with no multi-room sync.
+- **macOS:** use the AirPlay Receiver built into macOS (System Settings → General → AirDrop & Handoff). Set **Allow AirPlay for** to **Anyone on the same network**. Settings → AirPlay has a shortcut there.
+
 ## Using it
 
 1. Install it on the computer connected to the speaker.
@@ -54,6 +61,7 @@ Layout:
 - `src/announce.js` checks whether Soloist's own mDNS announcement is visible. If not, it announces Soloist's Connect endpoint through `dns-sd` on macOS and `bonjour-service` elsewhere.
 - `src/main.js` is the Electron main process. It handles the tray menu, settings, and the encrypted API key. It supervises Soloist: restarts with backoff, restarts after sleep, and auto-updates. It reads playback events from Soloist's local WebSocket API.
 - `renderer/` is the window: React, Tailwind v4, and shadcn components on Base UI (`components.json`, `base-nova` style) with Hugeicons. Vite builds it to `dist-renderer/`, which Electron loads from disk. Add components with `npx shadcn@latest add <name>`.
+- `src/airplay/` is the AirPlay receiver. `raop.js` handles RTSP session control, the Apple-Challenge response, AES-encrypted RTP audio with reordering and resend requests, DMAP metadata, and DACP remote control. `alac.js` is the ALAC decoder. `output.js`, `player.*` play PCM through a Web Audio worklet in a hidden window.
 - `src/preload.js` is the bridge between the window and the main process (`window.speaker`).
 - `OFFICE_SPEAKER_SOLOIST_DIR=/path npm start` keeps Soloist, its data, and its cache in a different folder.
 - `build/installer.nsh` creates Soloist's folder under ProgramData, which users can write to. It also adds the Windows firewall rules.

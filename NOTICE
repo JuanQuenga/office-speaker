@@ -1,0 +1,11 @@
+Office Speaker includes a JavaScript port of Apple's ALAC (Apple Lossless)
+reference decoder (src/airplay/alac.js):
+
+  Apple Lossless Audio Codec
+  Copyright (c) 2011 Apple Inc. All rights reserved.
+  Licensed under the Apache License, Version 2.0
+  https://github.com/macosforge/alac
+  https://www.apache.org/licenses/LICENSE-2.0
+
+The AirPlay (RAOP) receiver in src/airplay/raop.js follows the protocol as
+documented by the shairport and shairport-sync projects.

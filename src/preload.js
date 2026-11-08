@@ -13,5 +13,6 @@ contextBridge.exposeInMainWorld("speaker", {
   setup: (input) => ipcRenderer.invoke("setup", input),
   saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
   checkUpdates: () => ipcRenderer.invoke("check-updates"),
+  openAirPlaySettings: () => ipcRenderer.invoke("open-airplay-settings"),
   copyLogs: () => ipcRenderer.invoke("copy-logs"),
 });
