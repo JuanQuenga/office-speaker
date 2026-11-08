@@ -21,6 +21,7 @@ const dgram = require("node:dgram");
 const { EventEmitter } = require("node:events");
 const http = require("node:http");
 const net = require("node:net");
+const os = require("node:os");
 const { Bonjour } = require("bonjour-service");
 
 const AIRPORT_KEY = crypto.createPrivateKey(require("./airport-key"));
@@ -28,6 +29,15 @@ const { createDecoder, configFromFmtp } = require("./alac");
 
 const SAMPLE_RATE = 44100;
 const REORDER_WAIT_MS = 150;
+const MAX_HEADER_BYTES = 16 * 1024;
+const MAX_BODY_BYTES = 4 * 1024 * 1024; // artwork is the largest thing senders send
+const IDLE_TIMEOUT_MS = 30000; // for connections that never start a session
+
+/** mDNS host name: senders resolve the SRV target over multicast, so it must be .local. */
+function mdnsHost() {
+  const name = os.hostname().replace(/\.local\.?$/i, "").replace(/[^a-z0-9-]/gi, "-") || "office-speaker";
+  return `${name}.local`;
+}
 
 class AirPlayReceiver extends EventEmitter {
   /**
@@ -43,6 +53,7 @@ class AirPlayReceiver extends EventEmitter {
     this.bonjour = null;
     this.session = null;
     this.port = 0;
+    this.sockets = new Set();
   }
 
   async start() {
@@ -50,10 +61,12 @@ class AirPlayReceiver extends EventEmitter {
     this.server.on("error", (error) => this.log(`airplay: server error ${error.message}`));
     // 5000 is what AirPort Express used; any port works if it's taken.
     this.port = await listen(this.server, 5000).catch(() => listen(this.server, 0));
-    this.bonjour = new Bonjour();
+    this.bonjour = new Bonjour({}, (error) => this.log(`airplay: mDNS error: ${error?.message ?? error}`));
+    this.bonjour.server?.mdns?.on?.("error", (error) => this.log(`airplay: mDNS error: ${error.message}`));
     this.bonjour.publish({
       name: `${this.hardwareId}@${this.name}`,
       type: "raop",
+      host: mdnsHost(),
       port: this.port,
       txt: {
         txtvers: "1",
@@ -93,6 +106,9 @@ class AirPlayReceiver extends EventEmitter {
     }
     const server = this.server;
     this.server = null;
+    // Close every connection, including idle ones, or server.close() never finishes.
+    for (const socket of this.sockets) socket.destroy();
+    this.sockets.clear();
     if (server) await new Promise((resolve) => server.close(() => resolve()));
   }
 
@@ -109,11 +125,21 @@ class AirPlayReceiver extends EventEmitter {
 
   accept(socket) {
     socket.setNoDelay(true);
+    this.sockets.add(socket);
     const connection = { socket, buffer: Buffer.alloc(0), session: null };
+    socket.setTimeout(IDLE_TIMEOUT_MS, () => {
+      if (!connection.session) socket.destroy();
+    });
     socket.on("data", (chunk) => {
       connection.buffer = Buffer.concat([connection.buffer, chunk]);
       let request;
       while ((request = takeRequest(connection))) {
+        if (request.invalid) {
+          // Malformed or oversized: drop the connection rather than trying to parse on.
+          this.log("airplay: dropped a malformed request");
+          socket.destroy();
+          return;
+        }
         try {
           this.handle(connection, request);
         } catch (error) {
@@ -124,6 +150,7 @@ class AirPlayReceiver extends EventEmitter {
     });
     socket.on("error", () => {});
     socket.on("close", () => {
+      this.sockets.delete(socket);
       if (connection.session && this.session === connection.session) this.endSession("sender left");
     });
   }
@@ -149,7 +176,12 @@ class AirPlayReceiver extends EventEmitter {
           return reply(socket, request, 415, headers);
         }
         // A new sender takes over, like picking a speaker in Spotify.
-        if (this.session) this.endSession("another sender took over");
+        // The same connection re-announcing keeps its socket; anyone else takes over.
+        if (this.session) {
+          this.endSession(this.session === connection.session ? "sender restarted" : "another sender took over", {
+            keepSocket: this.session === connection.session,
+          });
+        }
         const key = crypto.privateDecrypt(
           { key: AIRPORT_KEY, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING },
           fromBase64(sdp.rsaaeskey),
@@ -285,12 +317,12 @@ class AirPlayReceiver extends EventEmitter {
     }
   }
 
-  endSession(reason) {
+  endSession(reason, { keepSocket = false } = {}) {
     const session = this.session;
     if (!session) return;
     this.session = null;
     this.log(`airplay: session ended (${reason})`);
-    session.close();
+    session.close({ keepSocket });
     if (session.recording) this.emit("session", { active: false });
   }
 
@@ -328,7 +360,7 @@ class AirPlayReceiver extends EventEmitter {
     const session = this.session;
     if (session?.dacpEndpoint) return Promise.resolve(session.dacpEndpoint);
     return new Promise((resolve) => {
-      const bonjour = this.bonjour ?? new Bonjour();
+      const bonjour = this.bonjour ?? new Bonjour({}, () => {});
       const browser = bonjour.find({ type: "dacp" }, (service) => {
         if (service.name !== `iTunes_Ctrl_${dacpId}`) return;
         const host = service.addresses?.find((a) => net.isIPv4(a)) ?? service.referer?.address;
@@ -511,7 +543,7 @@ class Session {
     this.waitingSince = 0;
   }
 
-  close() {
+  close({ keepSocket = false } = {}) {
     clearInterval(this.timer);
     for (const udp of this.sockets) {
       try {
@@ -519,7 +551,7 @@ class Session {
       } catch {}
     }
     this.sockets = [];
-    this.socket.destroy();
+    if (!keepSocket) this.socket.destroy();
   }
 }
 
@@ -544,7 +576,8 @@ function listen(server, port) {
 /** Pulls one complete RTSP request off the connection buffer, if there is one. */
 function takeRequest(connection) {
   const end = connection.buffer.indexOf("\r\n\r\n");
-  if (end < 0) return null;
+  if (end < 0) return connection.buffer.length > MAX_HEADER_BYTES ? { invalid: true } : null;
+  if (end > MAX_HEADER_BYTES) return { invalid: true };
   const head = connection.buffer.subarray(0, end).toString("utf8").split("\r\n");
   const [method, path] = head[0].split(" ");
   const headers = {};
@@ -552,7 +585,10 @@ function takeRequest(connection) {
     const colon = line.indexOf(":");
     if (colon > 0) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
   }
-  const length = Number(headers["content-length"] ?? 0);
+  const lengthHeader = headers["content-length"] ?? "0";
+  if (!/^\d{1,9}$/.test(lengthHeader)) return { invalid: true };
+  const length = Number(lengthHeader);
+  if (length > MAX_BODY_BYTES) return { invalid: true };
   if (connection.buffer.length < end + 4 + length) return null;
   const body = connection.buffer.subarray(end + 4, end + 4 + length);
   connection.buffer = connection.buffer.subarray(end + 4 + length);

@@ -68,7 +68,7 @@ declare global {
       setup(input: { apiKey: string; name: string; consent: boolean }): Promise<Result>;
       saveSettings(settings: {
         name: string;
-        openAtLogin: boolean;
+        openAtLogin?: boolean;
         apiKey?: string;
         airplay?: boolean;
         remote?: boolean;

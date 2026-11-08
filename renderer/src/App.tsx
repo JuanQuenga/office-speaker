@@ -908,7 +908,8 @@ function Settings({ state }: { state: SpeakerState }) {
   const save = (patch: { name?: string; openAtLogin?: boolean; apiKey?: string; airplay?: boolean; remote?: boolean }) =>
     window.speaker.saveSettings({
       name: patch.name ?? state.settings.name,
-      openAtLogin: patch.openAtLogin ?? state.settings.openAtLogin,
+      // Only send this when it's the switch being changed, so other saves can't flip it.
+      openAtLogin: patch.openAtLogin,
       apiKey: patch.apiKey,
       airplay: patch.airplay,
       remote: patch.remote,

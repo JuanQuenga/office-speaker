@@ -12,6 +12,21 @@ const API = "https://all.api.radio-browser.info/json";
 const PLAYABLE = new Set(["MP3", "AAC", "AAC+", "OGG", "OPUS", "FLAC"]);
 const RESULT_LIMIT = 60;
 
+/** Electron's network stack: system proxy, certificate store, and ICY status lines. */
+function electronNet() {
+  try {
+    const { net } = require("electron");
+    return net?.request ? net : null;
+  } catch {
+    return null;
+  }
+}
+
+function netFetch(url, options) {
+  const net = electronNet();
+  return net?.fetch ? net.fetch(url, options) : fetch(url, options);
+}
+
 class RadioDirectory {
   constructor({ userAgent, log = () => {} }) {
     this.userAgent = userAgent;
@@ -21,7 +36,7 @@ class RadioDirectory {
   async request(path, params = {}) {
     const url = new URL(`${API}${path}`);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
-    const response = await fetch(url, {
+    const response = await netFetch(url, {
       headers: { "User-Agent": this.userAgent },
       signal: AbortSignal.timeout(10000),
     });
@@ -121,91 +136,132 @@ function cleanStation(input) {
  * @param {http.ServerResponse} res
  * @param {{ userAgent: string, onTitle: (title: string) => void, onError: (message: string) => void }} hooks
  */
-function relayStream(url, res, hooks, redirects = 0) {
-  let upstreamResponse = null;
-  const target = new URL(url);
-  const client = target.protocol === "https:" ? https : http;
-  const upstream = client.get(
-    target,
-    {
-      headers: { "Icy-MetaData": "1", "User-Agent": hooks.userAgent, Accept: "*/*" },
-      timeout: 15000,
-    },
-    (response) => {
-      upstreamResponse = response;
-      const status = response.statusCode ?? 0;
-      if (status >= 300 && status < 400 && response.headers.location && redirects < 5) {
-        response.resume();
-        relayStream(new URL(response.headers.location, target).toString(), res, hooks, redirects + 1);
-        return;
-      }
-      if (status !== 200) {
-        response.resume();
-        hooks.onError(`The station answered ${status}`);
-        res.writeHead(502).end();
-        return;
-      }
+function relayStream(url, res, hooks) {
+  let target;
+  try {
+    target = new URL(url);
+    if (target.protocol !== "http:" && target.protocol !== "https:") throw new Error("not http");
+  } catch {
+    hooks.onError("The station's address is invalid");
+    res.writeHead(502).end();
+    return;
+  }
 
-      let type = String(response.headers["content-type"] || "audio/mpeg").split(";")[0].trim();
-      if (type === "audio/aacp" || type === "audio/aac+") type = "audio/aac";
-      if (!type.startsWith("audio/") && type !== "application/ogg") type = "audio/mpeg";
-      res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store" });
-
-      const metaInt = Number(response.headers["icy-metaint"]) || 0;
-      if (!metaInt) {
-        response.pipe(res);
-        return;
-      }
-
-      // Stream layout: [metaInt audio bytes][1 byte: n][n*16 metadata bytes], repeated.
-      let audioLeft = metaInt;
-      let metaLeft = -1; // -1: next byte is the metadata length
-      let meta = [];
-      response.on("data", (chunk) => {
-        let offset = 0;
-        while (offset < chunk.length) {
-          if (audioLeft > 0) {
-            const take = Math.min(audioLeft, chunk.length - offset);
-            res.write(chunk.subarray(offset, offset + take));
-            audioLeft -= take;
-            offset += take;
-          } else if (metaLeft === -1) {
-            metaLeft = chunk[offset] * 16;
-            offset += 1;
-            meta = [];
-            if (metaLeft === 0) {
-              metaLeft = -1;
-              audioLeft = metaInt;
-            }
-          } else {
-            const take = Math.min(metaLeft, chunk.length - offset);
-            meta.push(chunk.subarray(offset, offset + take));
-            metaLeft -= take;
-            offset += take;
-            if (metaLeft === 0) {
-              const text = Buffer.concat(meta).toString("utf8").replace(/\0+$/, "");
-              const title = text.match(/StreamTitle='(.*?)';/s)?.[1]?.trim();
-              if (title !== undefined) hooks.onTitle(title);
-              metaLeft = -1;
-              audioLeft = metaInt;
-            }
-          }
-        }
-      });
-      response.on("end", () => res.end());
-      response.on("error", () => res.end());
-    },
-  );
-  upstream.on("timeout", () => upstream.destroy(new Error("timed out")));
-  upstream.on("error", (error) => {
-    hooks.onError(`Couldn't reach the station (${error.message})`);
+  const fail = (message) => {
+    hooks.onError(message);
     if (!res.headersSent) res.writeHead(502);
     res.end();
+  };
+
+  const net = electronNet();
+  if (net) {
+    // Follows redirects itself, uses the system proxy, and accepts "ICY 200 OK".
+    const request = net.request({ url: target.toString(), redirect: "follow", useSessionCookies: false });
+    request.setHeader("Icy-MetaData", "1");
+    request.setHeader("User-Agent", hooks.userAgent);
+    request.on("response", (response) => {
+      const header = (name) => {
+        const value = response.headers[name];
+        return Array.isArray(value) ? value[0] : value;
+      };
+      if (response.statusCode !== 200) {
+        fail(`The station answered ${response.statusCode}`);
+        request.abort();
+        return;
+      }
+      relayBody(response, res, header, hooks);
+    });
+    request.on("error", (error) => fail(`Couldn't reach the station (${error.message})`));
+    res.on("close", () => request.abort());
+    request.end();
+    return;
+  }
+
+  // Outside Electron (tests): plain Node HTTP with manual redirects.
+  const get = (current, redirects) => {
+    const client = current.protocol === "https:" ? https : http;
+    const upstream = client.get(
+      current,
+      { headers: { "Icy-MetaData": "1", "User-Agent": hooks.userAgent, Accept: "*/*" }, timeout: 15000 },
+      (response) => {
+        const status = response.statusCode ?? 0;
+        if (status >= 300 && status < 400 && response.headers.location && redirects < 5) {
+          response.resume();
+          let next;
+          try {
+            next = new URL(response.headers.location, current);
+            if (next.protocol !== "http:" && next.protocol !== "https:") throw new Error("not http");
+          } catch {
+            fail("The station redirected to an invalid address");
+            return;
+          }
+          get(next, redirects + 1);
+          return;
+        }
+        if (status !== 200) {
+          response.resume();
+          fail(`The station answered ${status}`);
+          return;
+        }
+        relayBody(response, res, (name) => response.headers[name], hooks);
+      },
+    );
+    upstream.on("timeout", () => upstream.destroy(new Error("timed out")));
+    upstream.on("error", (error) => fail(`Couldn't reach the station (${error.message})`));
+    res.on("close", () => upstream.destroy());
+  };
+  get(target, 0);
+}
+
+/** Copies audio to the player, pulling ICY metadata blocks out of the stream. */
+function relayBody(response, res, header, hooks) {
+  let type = String(header("content-type") || "audio/mpeg").split(";")[0].trim();
+  if (type === "audio/aacp" || type === "audio/aac+") type = "audio/aac";
+  if (!type.startsWith("audio/") && type !== "application/ogg") type = "audio/mpeg";
+  res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store" });
+
+  const metaInt = Number(header("icy-metaint")) || 0;
+  // Stream layout: [metaInt audio bytes][1 byte: n][n*16 metadata bytes], repeated.
+  let audioLeft = metaInt;
+  let metaLeft = -1; // -1: next byte is the metadata length
+  let meta = [];
+  response.on("data", (chunk) => {
+    if (!metaInt) {
+      res.write(chunk);
+      return;
+    }
+    let offset = 0;
+    while (offset < chunk.length) {
+      if (audioLeft > 0) {
+        const take = Math.min(audioLeft, chunk.length - offset);
+        res.write(chunk.subarray(offset, offset + take));
+        audioLeft -= take;
+        offset += take;
+      } else if (metaLeft === -1) {
+        metaLeft = chunk[offset] * 16;
+        offset += 1;
+        meta = [];
+        if (metaLeft === 0) {
+          metaLeft = -1;
+          audioLeft = metaInt;
+        }
+      } else {
+        const take = Math.min(metaLeft, chunk.length - offset);
+        meta.push(chunk.subarray(offset, offset + take));
+        metaLeft -= take;
+        offset += take;
+        if (metaLeft === 0) {
+          const text = Buffer.concat(meta).toString("utf8").replace(/\0+$/, "");
+          const title = text.match(/StreamTitle='(.*?)';/s)?.[1]?.trim();
+          if (title !== undefined) hooks.onTitle(title);
+          metaLeft = -1;
+          audioLeft = metaInt;
+        }
+      }
+    }
   });
-  res.on("close", () => {
-    upstream.destroy();
-    upstreamResponse?.destroy();
-  });
+  response.on("end", () => res.end());
+  response.on("error", () => res.end());
 }
 
 module.exports = { RadioDirectory, cleanStation, relayStream };

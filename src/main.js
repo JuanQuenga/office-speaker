@@ -68,16 +68,20 @@ function saveSettings() {
 }
 
 // The Soloist API key is a personal credential: keep it encrypted with the OS keychain.
+let apiKeyCache; // undefined: not read yet
 function readApiKey() {
+  if (apiKeyCache !== undefined) return apiKeyCache;
   try {
     const raw = fs.readFileSync(apiKeyPath());
-    return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString("utf8");
+    apiKeyCache = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString("utf8");
   } catch {
-    return null;
+    apiKeyCache = null;
   }
+  return apiKeyCache;
 }
 
 function writeApiKey(key) {
+  apiKeyCache = key;
   const data = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key) : Buffer.from(key);
   fs.mkdirSync(path.dirname(apiKeyPath()), { recursive: true });
   fs.writeFileSync(apiKeyPath(), data, { mode: 0o600 });
@@ -172,7 +176,7 @@ function update(patch) {
   Object.assign(state, patch);
   win?.webContents.send("state", publicState());
   refreshTray();
-  if (wasPlaying && !state.playing && pendingUpdate) applyPendingUpdate();
+  if (wasPlaying && !state.playing && pendingUpdate && !updatePromise) applyPendingUpdate();
 }
 
 // ---------------------------------------------------------------- logs
@@ -219,11 +223,14 @@ function contextName(context) {
   return context?.decorations?.identity?.name ?? "";
 }
 
-function handleSoloistEvent(event) {
-  // Someone started Spotify while an AirPlay sender was playing: Spotify wins.
+function handleSoloistEvent(event, { snapshot = false } = {}) {
+  // Someone started Spotify while AirPlay or radio was playing: Spotify wins.
+  // The snapshot Soloist sends when the control socket (re)connects describes
+  // existing state, not a new choice, so it doesn't count as a takeover.
   const spotifyPlaying =
     (event.type === "playback_changed" && event.status === "playing") ||
-    (event.type === "playback_state" && event.status === "playing" && event.is_active);
+    (!snapshot && event.type === "playback_state" && event.status === "playing" && event.is_active);
+  if (spotifyPlaying) spotifyPausePending = false;
   if (spotifyPlaying && airplayState.active) airplay?.disconnect();
   if (spotifyPlaying && radioState.active) stopRadio();
 
@@ -287,10 +294,24 @@ function connectSocket(child) {
     }
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
     socket = ws;
+    let first = true;
+    ws.addEventListener("open", () => {
+      // A takeover (radio/AirPlay) may have happened while the socket was down.
+      if (spotifyPausePending) {
+        spotifyPausePending = false;
+        sendSoloist("pause");
+      }
+    });
     ws.addEventListener("message", (message) => {
+      let event;
       try {
-        handleSoloistEvent(JSON.parse(String(message.data)));
-      } catch {}
+        event = JSON.parse(String(message.data));
+      } catch {
+        return;
+      }
+      const snapshot = first && (event.type === "playback_state" || event.type === "auth_state");
+      if (event.type === "playback_state") first = false;
+      handleSoloistEvent(event, { snapshot });
     });
     ws.addEventListener("close", () => {
       if (socket === ws) socket = null;
@@ -304,10 +325,21 @@ function connectSocket(child) {
 function sendSoloist(command, fields = {}) {
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: "command", command, ...fields }));
+    return true;
   }
+  return false;
+}
+
+// Pausing Spotify when another source takes over must not get lost if the
+// control socket happens to be reconnecting.
+let spotifyPausePending = false;
+function pauseSpotify() {
+  if (!sendSoloist("pause") && engine) spotifyPausePending = true;
 }
 
 let starting = null;
+let engineEpoch = 0; // bumped by stopEngine so an unfinished start gives up
+let expiredRestarts = 0;
 function startEngine() {
   // Collapse overlapping start requests (resume, settings save, crash restart).
   starting ??= startEngineNow().finally(() => {
@@ -319,6 +351,7 @@ function startEngine() {
 async function startEngineNow() {
   clearTimeout(restartTimer);
   if (quitting || engine) return;
+  const epoch = engineEpoch;
 
   const unsupported = unsupportedReason();
   if (unsupported) return update({ status: "unsupported", message: unsupported });
@@ -327,10 +360,15 @@ async function startEngineNow() {
 
   update({ status: "starting", message: "", playing: false, track: null, context: "" });
 
+  // A Soloist left over from a killed/crashed run (or an upgrade) would keep
+  // playing on its own and lock its files.
+  await install.killStale().catch((error) => log(`couldn't stop an old Soloist: ${error.message}`));
   if (signOutOnStart) {
     signOutOnStart = false;
     await install.resetSession().catch((error) => log(`session reset failed: ${error.message}`));
   }
+  // Stopped, quitting, or updating while we waited: don't start after all.
+  if (quitting || engine || epoch !== engineEpoch || updatePromise) return;
   fs.rmSync(path.join(install.dataDir, "ws.port"), { force: true });
 
   const args = [
@@ -363,6 +401,7 @@ async function startEngineNow() {
     if (zeroconf) {
       restartDelay = 2000;
       announcer.start({ name: settings.name, port: Number(zeroconf[1]), path: zeroconf[2] });
+      expiredRestarts = 0;
       if (state.status === "starting") update({ status: "ready" });
     }
     if (/login failed|make sure api key is valid/i.test(plain)) {
@@ -374,7 +413,14 @@ async function startEngineNow() {
   connectSocket(child);
 
   child.on("error", (error) => {
-    update({ status: "error", message: `Spotify Soloist failed: ${error.message}` });
+    // e.g. blocked by AppLocker/antivirus: 'exit' may never follow.
+    log(`soloist failed to run: ${error.message}`);
+    if (engine === child) {
+      engine = null;
+      socket?.close();
+      announcer.stop();
+    }
+    update({ status: "error", message: `Spotify Soloist couldn't run: ${error.message}` });
   });
   child.on("exit", (code) => {
     log(`soloist exited with code ${code}`);
@@ -385,9 +431,19 @@ async function startEngineNow() {
     }
     if (quitting || child.intentionalStop) return;
     if (code === 10) {
-      // This Soloist build expired. Fetch the current one and carry on.
+      // This Soloist build expired. Fetch the current one and carry on, but
+      // don't spin if the update can't be had (offline, CDN unchanged).
+      if (++expiredRestarts > 3) {
+        update({
+          status: "error",
+          message: "Spotify Soloist expired and couldn't be updated. Check the internet connection, then use Check for updates.",
+        });
+        return;
+      }
       update({ status: "expired", message: "This Soloist build expired. Updating…" });
-      checkForUpdates({ force: true }).then(() => startEngine());
+      checkForUpdates({ force: true }).then(() => {
+        restartTimer = setTimeout(startEngine, 5000 * expiredRestarts);
+      });
       return;
     }
     update({ status: "error", message: `Spotify Soloist stopped (code ${code}). Restarting…` });
@@ -398,6 +454,7 @@ async function startEngineNow() {
 
 function stopEngine() {
   clearTimeout(restartTimer);
+  engineEpoch++;
   const child = engine;
   engine = null;
   socket?.close();
@@ -423,6 +480,7 @@ function stopEngine() {
 
 async function restartEngine({ signOut = false } = {}) {
   if (quitting) return;
+  if (updatePromise) await updatePromise; // the update restarts it anyway
   await stopEngine();
   if (signOut) signOutOnStart = true;
   await startEngine();
@@ -476,7 +534,9 @@ async function browseRadio({ q, tag }) {
   const cached = browseCache.get(key);
   if (cached && Date.now() - cached.at < 5 * 60 * 1000) return cached.stations;
   const stations = q ? await directory.search(q) : tag ? await directory.byTag(tag) : await directory.popular();
+  if (stationCache.size > 3000) stationCache.clear(); // favorites/recents are looked up separately
   for (const station of stations) stationCache.set(station.id, station);
+  if (browseCache.size > 100) browseCache.delete(browseCache.keys().next().value);
   browseCache.set(key, { at: Date.now(), stations });
   return stations;
 }
@@ -495,7 +555,7 @@ async function playRadio(input) {
   if (!station) return { ok: false, error: "That station can't be played." };
   if (!remote?.port) return { ok: false, error: "Radio isn't ready yet." };
   // Radio takes over from Spotify and AirPlay.
-  sendSoloist("pause");
+  pauseSpotify();
   if (airplayState.active) airplay?.disconnect();
 
   radioState.generation++;
@@ -628,8 +688,10 @@ async function startRemote() {
 async function restartRemote() {
   const server = remote;
   remote = null;
-  await server?.stop();
+  await server?.stop(); // this also cuts the radio relay
   await startRemote();
+  // Reconnect the radio to the new server.
+  if (radioState.active && radioState.status !== "paused") playRadio(radioState.station);
 }
 
 // ---------------------------------------------------------------- AirPlay
@@ -685,7 +747,7 @@ async function startAirPlay() {
 
   receiver.on("session", ({ active }) => {
     if (active) {
-      sendSoloist("pause"); // AirPlay takes over from Spotify and radio
+      pauseSpotify(); // AirPlay takes over from Spotify and radio
       stopRadio();
       Object.assign(airplayState, {
         active: true,
@@ -769,17 +831,23 @@ function airplayCommand(name) {
 
 let pendingUpdate = false;
 let updating = false;
+let updatePromise = null; // the one install in progress; everything else waits for it
 
-async function applyPendingUpdate() {
-  pendingUpdate = false;
-  await stopEngine();
-  try {
-    await install.install((progress) => log(progress));
-    log(`updated soloist to ${install.meta()?.version}`);
-  } catch (error) {
-    log(`update failed: ${error.message}`);
-  }
-  await startEngine();
+function applyPendingUpdate() {
+  updatePromise ??= (async () => {
+    pendingUpdate = false;
+    await stopEngine();
+    try {
+      await install.install((progress) => log(progress));
+      log(`updated soloist to ${install.meta()?.version}`);
+    } catch (error) {
+      log(`update failed: ${error.message}`);
+    }
+  })().finally(() => {
+    updatePromise = null;
+    startEngine();
+  });
+  return updatePromise;
 }
 
 /** @returns {Promise<string>} a short human-readable result */
@@ -813,14 +881,18 @@ async function checkForUpdates({ force = false } = {}) {
 
 // ---------------------------------------------------------------- login item
 
+// On Windows the login item is matched by its arguments, so read it with the
+// same args it's registered with, or it always reads as off.
+const LOGIN_ARGS = ["--hidden"];
+
 function getOpenAtLogin() {
   if (!app.isPackaged) return false;
-  return app.getLoginItemSettings().openAtLogin;
+  return app.getLoginItemSettings({ args: LOGIN_ARGS }).openAtLogin;
 }
 
 function setOpenAtLogin(enabled) {
   if (!app.isPackaged) return;
-  app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true, args: ["--hidden"] });
+  app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true, args: LOGIN_ARGS });
 }
 
 // ---------------------------------------------------------------- UI
@@ -1096,8 +1168,15 @@ app.on("before-quit", (event) => {
   quitting = true;
   event.preventDefault();
   stopRadio();
-  Promise.allSettled([stopEngine(), stopAirPlay(), remote?.stop()]).finally(() => app.exit(0));
+  const deadline = new Promise((resolve) => setTimeout(resolve, 6000));
+  Promise.race([Promise.allSettled([stopEngine(), stopAirPlay(), remote?.stop()]), deadline]).finally(() =>
+    app.exit(0),
+  );
 });
+
+// A network hiccup in a library shouldn't pop a "JavaScript error" dialog on the speaker.
+process.on("uncaughtException", (error) => log(`uncaught: ${error?.stack ?? error}`));
+process.on("unhandledRejection", (error) => log(`unhandled: ${error?.stack ?? error}`));
 
 app.whenReady().then(() => {
   if (isMac) app.dock?.hide();
@@ -1118,7 +1197,7 @@ app.whenReady().then(() => {
   startRemote();
 
   const launchedHidden =
-    process.argv.includes("--hidden") || app.getLoginItemSettings().wasOpenedAsHidden;
+    process.argv.includes("--hidden") || app.getLoginItemSettings({ args: LOGIN_ARGS }).wasOpenedAsHidden;
   if (firstRun || state.status === "setup" || !launchedHidden) showWindow();
 
   // Keep Soloist current: each build stops working 90 days after it was built.

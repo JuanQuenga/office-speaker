@@ -118,23 +118,34 @@ function radioPlayer(port) {
 }
 
 async function start(port) {
+  // Radio uses a plain <audio> element, so wire it up first: it keeps working
+  // even if the AirPlay worklet below can't start (e.g. no audio device yet).
   const radio = radioPlayer(port);
+  let node = null;
+  let context = null;
+  let pendingGain = null;
+  port.onmessage = (event) => {
+    const message = event.data;
+    if (message.type === "radio-play") return radio.play(message.url, message.volume);
+    if (message.type === "radio-stop") return radio.stop();
+    if (message.type === "radio-volume") return radio.volume(message.value);
+    if (!node) {
+      if (message.type === "gain") pendingGain = message; // apply once ready
+      return;
+    }
+    if (context.state !== "running") context.resume();
+    if (message.type === "pcm") node.port.postMessage(message, [message.pcm.buffer]);
+    else node.port.postMessage(message);
+  };
   try {
-    const context = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: "playback" });
+    context = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: "playback" });
     const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
     await context.audioWorklet.addModule(url);
-    const node = new AudioWorkletNode(context, "pcm-player", { outputChannelCount: [2] });
-    node.connect(context.destination);
-    node.port.onmessage = (event) => port.postMessage(event.data);
-    port.onmessage = (event) => {
-      const message = event.data;
-      if (message.type === "radio-play") return radio.play(message.url, message.volume);
-      if (message.type === "radio-stop") return radio.stop();
-      if (message.type === "radio-volume") return radio.volume(message.value);
-      if (context.state !== "running") context.resume();
-      if (message.type === "pcm") node.port.postMessage(message, [message.pcm.buffer]);
-      else node.port.postMessage(message);
-    };
+    const worklet = new AudioWorkletNode(context, "pcm-player", { outputChannelCount: [2] });
+    worklet.connect(context.destination);
+    worklet.port.onmessage = (event) => port.postMessage(event.data);
+    node = worklet;
+    if (pendingGain) node.port.postMessage(pendingGain);
   } catch (error) {
     port.postMessage({ type: "error", message: String(error?.message ?? error) });
   }

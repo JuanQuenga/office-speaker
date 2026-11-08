@@ -6,6 +6,7 @@
 
 "use strict";
 
+const dgram = require("node:dgram");
 const fs = require("node:fs");
 const http = require("node:http");
 const os = require("node:os");
@@ -44,6 +45,7 @@ class RemoteServer {
     });
     this.server = server;
     this.port = await listen(server, PREFERRED_PORT, this.host).catch(() => listen(server, 0, this.host));
+    this.address = this.lan ? ((await routedAddress()) ?? lanAddress()) : null;
     this.log(`remote: phone page at ${this.url()}`);
   }
 
@@ -63,7 +65,7 @@ class RemoteServer {
   /** The address coworkers open on their phones. */
   url() {
     if (!this.lan) return null;
-    const ip = lanAddress();
+    const ip = this.address;
     return ip && this.port ? `http://${ip}:${this.port}/` : null;
   }
 
@@ -157,11 +159,36 @@ function isLoopback(address = "") {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
-/** The computer's address on the office network (skipping VPN, Docker and similar). */
+/**
+ * The address the OS would use to reach the internet: the real network adapter,
+ * not a Hyper-V, WSL, VPN or Docker one. No packet is sent; UDP connect only routes.
+ */
+function routedAddress() {
+  return new Promise((resolve) => {
+    const socket = dgram.createSocket("udp4");
+    const done = (address) => {
+      try {
+        socket.close();
+      } catch {}
+      resolve(address);
+    };
+    socket.on("error", () => done(null));
+    try {
+      socket.connect(53, "1.1.1.1", () => {
+        const { address } = socket.address();
+        done(address && address !== "0.0.0.0" && !address.startsWith("127.") ? address : null);
+      });
+    } catch {
+      done(null);
+    }
+  });
+}
+
+/** Fallback when there's no route: pick the likeliest office-network address. */
 function lanAddress() {
   const candidates = [];
   for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
-    if (/^(lo|docker|br-|veth|virbr|vmnet|vbox|utun|tailscale|tun|tap|zt|wg|awdl|llw|bridge)/i.test(name)) continue;
+    if (/^(lo|docker|br-|veth|virbr|vmnet|vbox|utun|tailscale|tun|tap|zt|wg|awdl|llw|bridge)|vEthernet|VirtualBox|VMware|Hyper-V|WSL|Loopback/i.test(name)) continue;
     for (const address of addresses ?? []) {
       if (address.family !== "IPv4" || address.internal) continue;
       const ip = address.address;

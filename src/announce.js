@@ -7,10 +7,20 @@
 // through the system's Bonjour daemon on macOS, or a JS responder elsewhere.
 
 const { spawn } = require("node:child_process");
+const os = require("node:os");
 const { Bonjour } = require("bonjour-service");
 
 const SERVICE = "spotify-connect";
 const PROBE_MS = 4000;
+// A probe from this computer can see Soloist's own announcement over loopback
+// even when phones on the LAN can't (spotify/soloist#33), so on the desktop
+// platforms we always announce. The probe is only used elsewhere (Linux).
+const ALWAYS_ANNOUNCE = process.platform === "darwin" || process.platform === "win32";
+
+function mdnsHost() {
+  const name = os.hostname().replace(/\.local\.?$/i, "").replace(/[^a-z0-9-]/gi, "-") || "office-speaker";
+  return `${name}.local`;
+}
 
 class Announcer {
   constructor(log = () => {}) {
@@ -25,7 +35,7 @@ class Announcer {
     await this.stop();
     const generation = ++this.generation;
 
-    if (await this.isVisible(endpoint)) {
+    if (!ALWAYS_ANNOUNCE && (await this.isVisible(endpoint))) {
       this.log(`Soloist's own announcement is visible on port ${endpoint.port}`);
       return;
     }
@@ -39,8 +49,9 @@ class Announcer {
       this.child.on("error", (error) => this.log(`dns-sd failed: ${error.message}`));
       this.log(`Announcing "${endpoint.name}" through Bonjour on port ${endpoint.port}`);
     } else {
-      this.bonjour = new Bonjour();
-      this.bonjour.publish({ name: endpoint.name, type: SERVICE, port: endpoint.port, txt });
+      this.bonjour = new Bonjour({}, (error) => this.log(`mDNS error: ${error?.message ?? error}`));
+      this.bonjour.server?.mdns?.on?.("error", (error) => this.log(`mDNS error: ${error.message}`));
+      this.bonjour.publish({ name: endpoint.name, type: SERVICE, host: mdnsHost(), port: endpoint.port, txt });
       this.log(`Announcing "${endpoint.name}" on port ${endpoint.port}`);
     }
   }
@@ -50,7 +61,7 @@ class Announcer {
     return new Promise((resolve) => {
       let bonjour;
       try {
-        bonjour = new Bonjour();
+        bonjour = new Bonjour({}, () => {});
       } catch {
         resolve(false);
         return;
