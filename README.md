@@ -4,6 +4,11 @@ Turns a Mac or Windows computer into a Spotify Connect speaker. Anyone on the sa
 
 It works the same way as Music Assistant, raspotify, and spotifyd: it runs [librespot](https://github.com/librespot-org/librespot), the open-source Spotify Connect implementation, wrapped in a menu bar / tray app.
 
+<p>
+  <img src="docs/screenshots/idle-light.png" width="300" alt="Waiting for someone to pick the speaker">
+  <img src="docs/screenshots/playing-dark.png" width="300" alt="Now playing, dark mode">
+</p>
+
 ## Using it
 
 1. Install it on the computer connected to the speaker (see below) and give the speaker a name.
@@ -36,12 +41,15 @@ Requirements: Node 24 and Rust (stable). Linux also needs the ALSA headers.
 
 ```sh
 npm install
-npm start          # builds engine/ with cargo, then launches the app
+npm start          # builds engine/ with cargo and the window with Vite, then launches the app
+npm run typecheck
 ```
 
 Layout:
 
 - `engine/` is a Rust program built on librespot. It announces the speaker, plays audio, writes JSON events on stdout, and takes commands on stdin (`play`, `pause`, `next`, `prev`, `disconnect`, `volume <0-100>`). It exits when stdin closes. Run `speaker-engine --list-outputs` to list audio devices.
 - `src/main.js` is the Electron main process: tray menu, settings, and engine supervision (restart with backoff, restart after sleep).
-- `src/renderer/` is the window.
+- `renderer/` is the window: React, Tailwind v4, and shadcn components on Base UI (`components.json`, `base-nova` style) with Hugeicons. Vite builds it to `dist-renderer/`, which Electron loads from disk. Add components with `npx shadcn@latest add <name>`.
+- `src/preload.js` is the bridge between the window and the main process (`window.speaker`).
+- `OFFICE_SPEAKER_ENGINE=/path/to/engine npm start` runs a different engine build, or a fake one that prints events, in dev.
 - `build/installer.nsh` adds and removes the Windows firewall rule.

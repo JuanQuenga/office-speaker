@@ -2,3 +2,4 @@ node_modules/
 dist/
 engine/target/
 engine/dist/
+dist-renderer/

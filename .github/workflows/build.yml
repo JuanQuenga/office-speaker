@@ -34,7 +34,7 @@ jobs:
             target/x86_64-apple-darwin/release/speaker-engine
           lipo -info dist/speaker-engine
       - run: npm ci
-      - run: npx electron-builder --mac --universal --publish never
+      - run: npm run dist:mac
       - uses: actions/upload-artifact@v4
         with:
           name: office-speaker-mac
@@ -61,7 +61,7 @@ jobs:
           mkdir -p dist
           cp target/release/speaker-engine.exe dist/
       - run: npm ci
-      - run: npx electron-builder --win --x64 --publish never
+      - run: npm run dist:win
       - uses: actions/upload-artifact@v4
         with:
           name: office-speaker-windows

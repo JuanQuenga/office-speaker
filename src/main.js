@@ -107,6 +107,8 @@ let restartDelay = 1000;
 const engineLog = [];
 
 function enginePath() {
+  // Dev/testing hook: run a different engine build.
+  if (!app.isPackaged && process.env.OFFICE_SPEAKER_ENGINE) return process.env.OFFICE_SPEAKER_ENGINE;
   return app.isPackaged
     ? path.join(process.resourcesPath, "engine", ENGINE_EXE)
     : path.join(__dirname, "..", "engine", "dist", ENGINE_EXE);
@@ -347,7 +349,7 @@ function showWindow() {
   }
   win = new BrowserWindow({
     width: 400,
-    height: 500,
+    height: 540,
     useContentSize: true,
     resizable: false,
     fullscreenable: false,
@@ -362,7 +364,7 @@ function showWindow() {
       sandbox: true,
     },
   });
-  win.loadFile(path.join(__dirname, "renderer", "index.html"));
+  win.loadFile(path.join(__dirname, "..", "dist-renderer", "index.html"));
   win.once("ready-to-show", () => win.show());
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://")) shell.openExternal(url);
