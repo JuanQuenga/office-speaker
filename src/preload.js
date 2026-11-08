@@ -7,9 +7,10 @@ contextBridge.exposeInMainWorld("speaker", {
     ipcRenderer.on("state", listener);
     return () => ipcRenderer.removeListener("state", listener);
   },
-  listOutputs: () => ipcRenderer.invoke("list-outputs"),
   command: (command) => ipcRenderer.invoke("command", command),
   setVolume: (percent) => ipcRenderer.invoke("set-volume", percent),
+  setup: (input) => ipcRenderer.invoke("setup", input),
   saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
+  checkUpdates: () => ipcRenderer.invoke("check-updates"),
   copyLogs: () => ipcRenderer.invoke("copy-logs"),
 });

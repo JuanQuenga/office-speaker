@@ -1,20 +1,19 @@
 {
   "name": "office-speaker",
   "productName": "Office Speaker",
-  "version": "0.1.0",
-  "description": "Turns this computer into a Spotify Connect speaker anyone on the network can play to.",
+  "version": "0.2.0",
+  "description": "Turns this computer into a Spotify Connect speaker anyone on the network can play to, using Spotify Soloist.",
   "main": "src/main.js",
   "private": true,
   "license": "MIT",
   "author": "Juan Quenga",
   "scripts": {
-    "engine": "node scripts/build-engine.mjs",
     "ui": "vite build",
     "typecheck": "tsc --noEmit",
-    "start": "node scripts/build-engine.mjs && vite build && electron .",
-    "dist:mac": "vite build && electron-builder --mac --universal --publish never",
+    "start": "vite build && electron .",
+    "dist:mac": "vite build && electron-builder --mac --arm64 --publish never",
     "dist:win": "vite build && electron-builder --win --x64 --publish never",
-    "dist:linux": "node scripts/build-engine.mjs && vite build && electron-builder --linux AppImage --publish never"
+    "dist:linux": "vite build && electron-builder --linux AppImage --publish never"
   },
   "devDependencies": {
     "@base-ui/react": "^1.9.0",
@@ -47,15 +46,6 @@
       "assets/**/*",
       "package.json"
     ],
-    "extraResources": [
-      {
-        "from": "engine/dist",
-        "to": "engine",
-        "filter": [
-          "speaker-engine*"
-        ]
-      }
-    ],
     "mac": {
       "target": [
         "dmg",
@@ -63,14 +53,14 @@
       ],
       "category": "public.app-category.music",
       "identity": "-",
-      "x64ArchFiles": "Contents/Resources/engine/*",
       "extendInfo": {
         "LSUIElement": true,
         "NSLocalNetworkUsageDescription": "Office Speaker announces itself on your network so people can pick it in their Spotify app.",
         "NSBonjourServices": [
           "_spotify-connect._tcp"
         ]
-      }
+      },
+      "minimumSystemVersion": "13.0"
     },
     "dmg": {
       "title": "Office Speaker"
@@ -89,5 +79,8 @@
     "linux": {
       "category": "Audio"
     }
+  },
+  "dependencies": {
+    "bonjour-service": "^1.4.4"
   }
 }

@@ -2,13 +2,18 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import {
   Alert02Icon,
+  ArrowUpRight01Icon,
   Copy01Icon,
+  Key01Icon,
+  Loading03Icon,
   MusicNote03Icon,
   NextIcon,
   PauseIcon,
   PencilEdit02Icon,
   PlayIcon,
+  Playlist01Icon,
   PreviousIcon,
+  Refresh01Icon,
   SmartPhone01Icon,
   Speaker01Icon,
   Unlink04Icon,
@@ -28,6 +33,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldContent,
@@ -37,42 +43,38 @@ import {
   FieldSeparator,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { EngineStatus, Outputs, SpeakerSettings, SpeakerState } from "./speaker";
-
-type Form = Omit<SpeakerSettings, "volume">;
+import type { EngineStatus, SpeakerState } from "./speaker";
 
 const STATUS: Record<EngineStatus, { label: string; tone: string }> = {
+  unsupported: { label: "Not supported", tone: "bg-destructive" },
+  setup: { label: "Needs setup", tone: "bg-amber-500" },
+  installing: { label: "Installing", tone: "bg-amber-500" },
   starting: { label: "Starting", tone: "bg-amber-500" },
   ready: { label: "Ready", tone: "bg-primary" },
-  connecting: { label: "Connecting", tone: "bg-amber-500" },
   connected: { label: "Playing", tone: "bg-primary" },
-  offline: { label: "No network", tone: "bg-amber-500" },
+  expired: { label: "Updating", tone: "bg-amber-500" },
   error: { label: "Problem", tone: "bg-destructive" },
 };
 
-// Base UI Select values can't be empty strings, so "system default" gets a sentinel.
-const DEFAULT_OUTPUT = "__system_default__";
-
-const QUALITY = [
-  { value: "320", label: "High · 320 kbps" },
-  { value: "160", label: "Normal · 160 kbps" },
-  { value: "96", label: "Low · 96 kbps" },
-];
-
+const DASHBOARD_URL = "https://developer.spotify.com/dashboard";
+const TERMS_URL = "https://www.spotify.com/legal/end-user-agreement/";
+const SOLOIST_URL = "https://developer.spotify.com/documentation/soloist";
 const RENAME_EVENT = "office-speaker:rename";
 
 function Icon({ icon, className }: { icon: IconSvgElement; className?: string }) {
   return <HugeiconsIcon icon={icon} strokeWidth={2} className={className} />;
+}
+
+function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 font-medium text-primary hover:underline">
+      {children}
+      <Icon icon={ArrowUpRight01Icon} className="size-3" />
+    </a>
+  );
 }
 
 export function App() {
@@ -85,23 +87,47 @@ export function App() {
   }, []);
 
   if (!state) return null;
-  const connected = state.status === "connected" || (state.status === "connecting" && !!state.track);
+  const connected = state.status === "connected";
+  const settingUp = state.status === "setup" || state.status === "installing";
 
   return (
     <div className="flex h-screen flex-col">
       <TopBar state={state} />
-      <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.35fr)_minmax(320px,1fr)] gap-4 p-4">
-        <section className="flex min-h-0 flex-col gap-3">
-          {state.message && (
-            <div className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              <Icon icon={Alert02Icon} className="mt-0.5 size-4 shrink-0" />
-              <p>{state.message}</p>
-            </div>
-          )}
-          {connected ? <NowPlaying state={state} /> : <Waiting state={state} />}
-        </section>
-        <Settings state={state} />
-      </main>
+      {state.status === "unsupported" ? (
+        <Centered>
+          <Card className="w-full max-w-md">
+            <CardHeader>
+              <CardTitle>This computer can't run Office Speaker</CardTitle>
+              <CardDescription>{state.message}</CardDescription>
+            </CardHeader>
+          </Card>
+        </Centered>
+      ) : settingUp ? (
+        <Centered>
+          <Setup state={state} />
+        </Centered>
+      ) : (
+        <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.35fr)_minmax(320px,1fr)] gap-4 p-4">
+          <section className="flex min-h-0 flex-col gap-3">
+            {state.message && <Notice>{state.message}</Notice>}
+            {connected ? <NowPlaying state={state} /> : <Waiting state={state} />}
+          </section>
+          <Settings state={state} />
+        </main>
+      )}
+    </div>
+  );
+}
+
+function Centered({ children }: { children: ReactNode }) {
+  return <main className="grid min-h-0 flex-1 place-items-center overflow-y-auto p-6">{children}</main>;
+}
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+      <Icon icon={Alert02Icon} className="mt-0.5 size-4 shrink-0" />
+      <p>{children}</p>
     </div>
   );
 }
@@ -137,6 +163,102 @@ function TopBar({ state }: { state: SpeakerState }) {
   );
 }
 
+function Setup({ state }: { state: SpeakerState }) {
+  const [name, setName] = useState(state.settings.name);
+  const [apiKey, setApiKey] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [error, setError] = useState("");
+  const installing = state.status === "installing";
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    const result = await window.speaker.setup({ name, apiKey, consent });
+    if (!result.ok) setError(result.error);
+  };
+
+  return (
+    <Card className="w-full max-w-lg">
+      <form onSubmit={submit}>
+        <CardHeader>
+          <CardTitle className="text-lg">Set up this speaker</CardTitle>
+          <CardDescription>
+            Office Speaker plays through Spotify Soloist, Spotify's official player for speakers like this one.
+            Once it's set up, anyone on this Wi-Fi can play to it from their own Spotify app, Free or Premium.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="py-5">
+          <FieldGroup className="gap-5">
+            <Field>
+              <FieldLabel htmlFor="setup-name">Speaker name</FieldLabel>
+              <Input
+                id="setup-name"
+                value={name}
+                maxLength={60}
+                spellCheck={false}
+                autoComplete="off"
+                disabled={installing}
+                onChange={(event) => setName(event.target.value)}
+              />
+              <FieldDescription>What people see in their Spotify device list.</FieldDescription>
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="setup-key">Spotify Soloist API key</FieldLabel>
+              <Input
+                id="setup-key"
+                type="password"
+                value={apiKey}
+                placeholder="Paste the key"
+                autoComplete="off"
+                disabled={installing}
+                onChange={(event) => setApiKey(event.target.value)}
+              />
+              <FieldDescription>
+                Someone with Spotify Premium creates it once: open the <ExternalLink href={DASHBOARD_URL}>Spotify
+                developer dashboard</ExternalLink> and click <strong>Spotify Soloist API Key</strong>. It's stored
+                encrypted on this computer.
+              </FieldDescription>
+            </Field>
+
+            <Field orientation="horizontal">
+              <Checkbox
+                id="setup-consent"
+                checked={consent}
+                disabled={installing}
+                onCheckedChange={(checked) => setConsent(checked === true)}
+              />
+              <FieldContent>
+                <FieldLabel htmlFor="setup-consent">Download Spotify Soloist from Spotify</FieldLabel>
+                <FieldDescription>
+                  You agree to Spotify's <ExternalLink href={TERMS_URL}>Terms of Use</ExternalLink>. Each Soloist
+                  version works for 90 days, so Office Speaker keeps it updated.{" "}
+                  <ExternalLink href={SOLOIST_URL}>About Soloist</ExternalLink>
+                </FieldDescription>
+              </FieldContent>
+            </Field>
+          </FieldGroup>
+        </CardContent>
+        <CardFooter className="justify-between gap-3">
+          <p className={cn("text-xs", error || state.message ? "text-destructive" : "text-muted-foreground")}>
+            {installing ? state.progress : error || state.message}
+          </p>
+          <Button type="submit" disabled={installing || !consent || !apiKey.trim() || !name.trim()}>
+            {installing ? (
+              <>
+                <Icon icon={Loading03Icon} className="animate-spin" />
+                Setting up…
+              </>
+            ) : (
+              "Set up speaker"
+            )}
+          </Button>
+        </CardFooter>
+      </form>
+    </Card>
+  );
+}
+
 function Step({ icon, title, children }: { icon: IconSvgElement; title: string; children: ReactNode }) {
   return (
     <li className="flex flex-col gap-2 rounded-xl border bg-muted/30 p-3">
@@ -151,6 +273,7 @@ function Step({ icon, title, children }: { icon: IconSvgElement; title: string; 
 
 function Waiting({ state }: { state: SpeakerState }) {
   const name = state.settings.name;
+  const busy = state.status === "starting" || state.status === "expired";
   return (
     <Card className="flex-1 justify-between">
       <CardContent className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
@@ -158,10 +281,10 @@ function Waiting({ state }: { state: SpeakerState }) {
           {state.status === "ready" && (
             <span className="absolute inset-0 animate-ping rounded-2xl bg-primary/10 [animation-duration:2.5s]" />
           )}
-          <Icon icon={Speaker01Icon} className="size-9" />
+          <Icon icon={busy ? Loading03Icon : Speaker01Icon} className={cn("size-9", busy && "animate-spin")} />
         </div>
         <div>
-          <p className="text-sm text-muted-foreground">Visible in Spotify as</p>
+          <p className="text-sm text-muted-foreground">{busy ? "Starting up as" : "Visible in Spotify as"}</p>
           <p className="font-heading text-3xl font-semibold tracking-tight break-words">{name}</p>
         </div>
         <Button variant="outline" size="sm" onClick={() => window.dispatchEvent(new Event(RENAME_EVENT))}>
@@ -182,7 +305,8 @@ function Waiting({ state }: { state: SpeakerState }) {
           </Step>
         </ol>
         <p className="text-center text-xs text-muted-foreground">
-          Needs Spotify Premium. Whoever picks the speaker last takes over.
+          Free and Premium accounts both work. Whoever picks the speaker last takes over, or join their Jam to
+          add songs.
         </p>
       </CardFooter>
     </Card>
@@ -214,12 +338,12 @@ function NowPlaying({ state }: { state: SpeakerState }) {
             <p className="mt-1 line-clamp-2 font-heading text-2xl font-semibold tracking-tight">
               {track?.title ?? "Nothing playing yet"}
             </p>
-            {track && <p className="mt-0.5 truncate text-sm text-muted-foreground">{track.artist}</p>}
+            {track?.artist && <p className="mt-0.5 truncate text-sm text-muted-foreground">{track.artist}</p>}
             {track?.album && <p className="truncate text-sm text-muted-foreground">{track.album}</p>}
-            {state.client && (
+            {state.context && state.context !== track?.album && (
               <Badge variant="secondary" className="mt-3 max-w-full">
-                <Icon icon={SmartPhone01Icon} />
-                <span className="truncate">From {state.client}</span>
+                <Icon icon={Playlist01Icon} />
+                <span className="truncate">From {state.context}</span>
               </Badge>
             )}
           </div>
@@ -273,19 +397,16 @@ function NowPlaying({ state }: { state: SpeakerState }) {
   );
 }
 
-function toForm(settings: SpeakerSettings): Form {
-  const { volume: _volume, ...form } = settings;
-  return form;
-}
-
 function Settings({ state }: { state: SpeakerState }) {
-  const [form, setForm] = useState<Form>(() => toForm(state.settings));
-  const [outputs, setOutputs] = useState<Outputs>({ default: null, outputs: [] });
+  const saved = { name: state.settings.name, openAtLogin: state.settings.openAtLogin };
+  const [form, setForm] = useState(saved);
+  const [apiKey, setApiKey] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [updateNote, setUpdateNote] = useState("");
+  const [checking, setChecking] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
-  const saved = toForm(state.settings);
-  const dirty = JSON.stringify(form) !== JSON.stringify(saved);
+  const dirty = form.name !== saved.name || form.openAtLogin !== saved.openAtLogin || apiKey.trim() !== "";
 
   // Pick up changes saved elsewhere (e.g. the tray's start-at-login toggle) unless mid-edit.
   const savedKey = JSON.stringify(saved);
@@ -297,11 +418,6 @@ function Settings({ state }: { state: SpeakerState }) {
     }
   });
 
-  const refreshOutputs = () => window.speaker.listOutputs().then(setOutputs);
-  useEffect(() => {
-    refreshOutputs();
-  }, []);
-
   useEffect(() => {
     const rename = () => {
       nameRef.current?.focus();
@@ -311,28 +427,17 @@ function Settings({ state }: { state: SpeakerState }) {
     return () => window.removeEventListener(RENAME_EVENT, rename);
   }, []);
 
-  const defaultName = outputs.default && outputs.default !== "default" ? outputs.default : null;
-  const outputItems = [
-    { value: DEFAULT_OUTPUT, label: defaultName ? `System default (${defaultName})` : "System default" },
-    ...outputs.outputs.filter((name) => name !== outputs.default).map((name) => ({ value: name, label: name })),
-  ];
-  // Keep a saved device listed while it's switched off, e.g. a Bluetooth speaker.
-  if (form.output && !outputs.outputs.includes(form.output)) {
-    outputItems.push({ value: form.output, label: `${form.output} (not connected)` });
-  }
-
-  const update = (patch: Partial<Form>) => {
-    setForm((current) => ({ ...current, ...patch }));
-    setNote("");
-  };
-
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSaving(true);
-    const result = await window.speaker.saveSettings(form);
+    const result = await window.speaker.saveSettings({ ...form, apiKey: apiKey.trim() || undefined });
     setSaving(false);
+    if (result.ok) setApiKey("");
     setNote(result.ok ? "Saved" : result.error);
   };
+
+  const { soloist } = state;
+  const expiresSoon = soloist.daysLeft !== null && soloist.daysLeft <= 14;
 
   return (
     <Card className="min-h-0 gap-0 py-0">
@@ -352,65 +457,12 @@ function Settings({ state }: { state: SpeakerState }) {
                 maxLength={60}
                 spellCheck={false}
                 autoComplete="off"
-                onChange={(event) => update({ name: event.target.value })}
+                onChange={(event) => {
+                  setForm({ ...form, name: event.target.value });
+                  setNote("");
+                }}
               />
               <FieldDescription>What people see in their Spotify device list.</FieldDescription>
-            </Field>
-
-            <Field>
-              <FieldLabel>Play through</FieldLabel>
-              <Select
-                items={outputItems}
-                value={form.output || DEFAULT_OUTPUT}
-                onValueChange={(value) => update({ output: value === DEFAULT_OUTPUT ? "" : String(value) })}
-                onOpenChange={(isOpen) => isOpen && refreshOutputs()}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {outputItems.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FieldDescription>Pick the Bluetooth speaker to always play there.</FieldDescription>
-            </Field>
-
-            <Field>
-              <FieldLabel>Quality</FieldLabel>
-              <Select
-                items={QUALITY}
-                value={form.bitrate}
-                onValueChange={(value) => update({ bitrate: value as Form["bitrate"] })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {QUALITY.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <FieldSeparator />
-
-            <Field orientation="horizontal">
-              <FieldContent>
-                <FieldLabel htmlFor="normalize">Even out loudness</FieldLabel>
-                <FieldDescription>Keeps quiet and loud songs at a similar level.</FieldDescription>
-              </FieldContent>
-              <Switch
-                id="normalize"
-                checked={form.normalize}
-                onCheckedChange={(checked) => update({ normalize: checked })}
-              />
             </Field>
 
             <Field orientation="horizontal" data-disabled={!state.packaged}>
@@ -426,14 +478,71 @@ function Settings({ state }: { state: SpeakerState }) {
                 id="login"
                 disabled={!state.packaged}
                 checked={form.openAtLogin}
-                onCheckedChange={(checked) => update({ openAtLogin: checked })}
+                onCheckedChange={(checked) => {
+                  setForm({ ...form, openAtLogin: checked });
+                  setNote("");
+                }}
               />
             </Field>
+
+            <FieldSeparator />
+
+            <Field>
+              <FieldLabel htmlFor="api-key">
+                <Icon icon={Key01Icon} className="size-3.5 text-muted-foreground" />
+                Soloist API key
+              </FieldLabel>
+              <Input
+                id="api-key"
+                type="password"
+                value={apiKey}
+                placeholder={state.hasApiKey ? "Saved. Paste a new key to replace it" : "Paste the key"}
+                autoComplete="off"
+                onChange={(event) => {
+                  setApiKey(event.target.value);
+                  setNote("");
+                }}
+              />
+            </Field>
+
+            <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2.5">
+              <div className="min-w-0 text-xs">
+                <p className="font-medium">Spotify Soloist {soloist.version ?? ""}</p>
+                <p className={cn("text-muted-foreground", expiresSoon && "text-destructive")}>
+                  {updateNote ||
+                    (soloist.daysLeft === null
+                      ? "Not installed"
+                      : `This version works for ${Math.max(soloist.daysLeft, 0)} more days. Updates are automatic.`)}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={checking}
+                onClick={async () => {
+                  setChecking(true);
+                  setUpdateNote(await window.speaker.checkUpdates());
+                  setChecking(false);
+                }}
+              >
+                <Icon icon={Refresh01Icon} className={cn(checking && "animate-spin")} />
+                Check
+              </Button>
+            </div>
           </FieldGroup>
         </CardContent>
         <CardFooter className="justify-end gap-3 py-3">
           {note && <span className="text-xs text-muted-foreground">{note}</span>}
-          <Button type="button" variant="ghost" disabled={!dirty || saving} onClick={() => setForm(saved)}>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={!dirty || saving}
+            onClick={() => {
+              setForm(saved);
+              setApiKey("");
+            }}
+          >
             Reset
           </Button>
           <Button type="submit" disabled={!dirty || saving}>

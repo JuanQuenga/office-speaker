@@ -1,4 +1,12 @@
-export type EngineStatus = "starting" | "ready" | "connecting" | "connected" | "offline" | "error";
+export type EngineStatus =
+  | "unsupported"
+  | "setup"
+  | "installing"
+  | "starting"
+  | "ready"
+  | "connected"
+  | "expired"
+  | "error";
 
 export interface Track {
   title: string;
@@ -8,43 +16,33 @@ export interface Track {
   durationMs: number;
 }
 
-export interface SpeakerSettings {
-  name: string;
-  output: string;
-  bitrate: "96" | "160" | "320";
-  volume: number;
-  normalize: boolean;
-  openAtLogin: boolean;
-}
-
 export interface SpeakerState {
   status: EngineStatus;
   message: string;
-  client: string;
+  progress: string;
   playing: boolean;
   track: Track | null;
+  context: string;
   volume: number | null;
-  settings: SpeakerSettings;
+  settings: { name: string; volume: number; openAtLogin: boolean };
+  soloist: { version: string | null; buildDate: string | null; daysLeft: number | null };
+  hasApiKey: boolean;
   packaged: boolean;
   version: string;
 }
 
-export interface Outputs {
-  default: string | null;
-  outputs: string[];
-}
+type Result = { ok: true } | { ok: false; error: string };
 
 declare global {
   interface Window {
     speaker: {
       getState(): Promise<SpeakerState>;
       onState(callback: (state: SpeakerState) => void): () => void;
-      listOutputs(): Promise<Outputs>;
       command(command: "play" | "pause" | "next" | "prev" | "disconnect"): Promise<void>;
       setVolume(percent: number): Promise<void>;
-      saveSettings(
-        settings: Omit<SpeakerSettings, "volume">,
-      ): Promise<{ ok: true } | { ok: false; error: string }>;
+      setup(input: { apiKey: string; name: string; consent: boolean }): Promise<Result>;
+      saveSettings(settings: { name: string; openAtLogin: boolean; apiKey?: string }): Promise<Result>;
+      checkUpdates(): Promise<string>;
       copyLogs(): Promise<void>;
     };
   }
