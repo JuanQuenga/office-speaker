@@ -72,7 +72,7 @@
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
+    --radius: 0.75rem;
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.145 0 0);
     --sidebar-primary: oklch(0.205 0 0);
@@ -143,4 +143,46 @@
   html {
     @apply font-sans;
     }
+}
+/* The header doubles as the window's title bar. */
+@utility drag-region {
+  -webkit-app-region: drag;
+}
+@utility no-drag {
+  -webkit-app-region: no-drag;
+}
+
+@keyframes broadcast {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.65);
+    opacity: 0;
+  }
+}
+@utility animate-broadcast {
+  animation: broadcast 3.6s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+}
+
+@keyframes equalizer {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+@utility animate-equalizer {
+  animation: equalizer 0.9s ease-in-out infinite;
+  transform-origin: bottom;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-broadcast,
+  .animate-equalizer {
+    animation: none;
+  }
 }

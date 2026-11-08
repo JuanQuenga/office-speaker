@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("speaker", {
   },
   command: (command) => ipcRenderer.invoke("command", command),
   setVolume: (percent) => ipcRenderer.invoke("set-volume", percent),
+  seek: (ms) => ipcRenderer.invoke("seek", ms),
   setup: (input) => ipcRenderer.invoke("setup", input),
   saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
   checkUpdates: () => ipcRenderer.invoke("check-updates"),

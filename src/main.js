@@ -6,6 +6,7 @@ const {
   clipboard,
   ipcMain,
   nativeImage,
+  nativeTheme,
   powerMonitor,
   safeStorage,
   shell,
@@ -91,6 +92,8 @@ const state = {
   track: null,
   context: "",
   volume: null,
+  // { ms, at, speed }: playback position `ms` measured at epoch time `at`.
+  position: null,
 };
 
 function publicState() {
@@ -105,6 +108,7 @@ function publicState() {
     },
     hasApiKey: Boolean(readApiKey()),
     packaged: app.isPackaged,
+    platform: process.platform,
     version: app.getVersion(),
   };
 }
@@ -152,6 +156,11 @@ function trackFromItem(item) {
   };
 }
 
+function positionFrom(position) {
+  if (!position || typeof position.position_ms !== "number") return null;
+  return { ms: position.position_ms, at: position.timestamp_ms ?? Date.now(), speed: position.speed ?? 0 };
+}
+
 function contextName(context) {
   return context?.decorations?.identity?.name ?? "";
 }
@@ -160,7 +169,7 @@ function handleSoloistEvent(event) {
   switch (event.type) {
     case "auth_state":
       if (!event.logged_in) {
-        update({ status: "ready", playing: false, track: null, context: "", volume: null });
+        update({ status: "ready", playing: false, track: null, context: "", volume: null, position: null });
       } else {
         update({ status: event.is_active ? "connected" : "ready" });
       }
@@ -172,6 +181,7 @@ function handleSoloistEvent(event) {
         track: trackFromItem(event.item),
         context: contextName(event.context),
         volume: event.volume ?? state.volume,
+        position: positionFrom(event.position),
       });
       rememberVolume(event.volume);
       break;
@@ -180,6 +190,9 @@ function handleSoloistEvent(event) {
       break;
     case "track_changed":
       update({ track: trackFromItem(event.item) });
+      break;
+    case "position_sync":
+      update({ position: positionFrom(event.position) });
       break;
     case "context_changed":
       update({ context: contextName(event.context) });
@@ -509,6 +522,23 @@ function createTray() {
   refreshTray();
 }
 
+const HEADER_HEIGHT = 52;
+
+function windowBackground() {
+  return nativeTheme.shouldUseDarkColors ? "#0b0b0c" : "#f6f7f7";
+}
+
+function titleBarOverlay() {
+  const dark = nativeTheme.shouldUseDarkColors;
+  return { color: dark ? "#0b0b0c" : "#ffffff", symbolColor: dark ? "#e5e5e5" : "#262626", height: HEADER_HEIGHT };
+}
+
+nativeTheme.on("updated", () => {
+  if (!win) return;
+  win.setBackgroundColor(windowBackground());
+  if (isWin) win.setTitleBarOverlay(titleBarOverlay());
+});
+
 function showWindow() {
   if (win) {
     win.show();
@@ -516,15 +546,19 @@ function showWindow() {
     return;
   }
   win = new BrowserWindow({
-    width: 940,
+    width: 960,
     height: 680,
-    minWidth: 800,
-    minHeight: 560,
+    minWidth: 820,
+    minHeight: 580,
     useContentSize: true,
     fullscreenable: false,
     title: "Office Speaker",
     show: false,
     autoHideMenuBar: true,
+    backgroundColor: windowBackground(),
+    // The app's header doubles as the title bar.
+    ...(isMac && { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 18, y: 19 } }),
+    ...(isWin && { titleBarStyle: "hidden", titleBarOverlay: titleBarOverlay() }),
     icon: path.join(__dirname, "..", "assets", "icon-256.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -559,6 +593,11 @@ ipcMain.handle("get-state", () => publicState());
 
 ipcMain.handle("command", (_event, name) => {
   if (["play", "pause", "next", "prev", "disconnect"].includes(name)) command(name);
+});
+
+ipcMain.handle("seek", (_event, ms) => {
+  const position = Math.max(0, Math.round(Number(ms)));
+  if (Number.isFinite(position)) sendSoloist("seek", { position_ms: position });
 });
 
 ipcMain.handle("set-volume", (_event, percent) => {

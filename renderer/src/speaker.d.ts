@@ -24,10 +24,12 @@ export interface SpeakerState {
   track: Track | null;
   context: string;
   volume: number | null;
+  position: { ms: number; at: number; speed: number } | null;
   settings: { name: string; volume: number; openAtLogin: boolean };
   soloist: { version: string | null; buildDate: string | null; daysLeft: number | null };
   hasApiKey: boolean;
   packaged: boolean;
+  platform: string;
   version: string;
 }
 
@@ -40,6 +42,7 @@ declare global {
       onState(callback: (state: SpeakerState) => void): () => void;
       command(command: "play" | "pause" | "next" | "prev" | "disconnect"): Promise<void>;
       setVolume(percent: number): Promise<void>;
+      seek(ms: number): Promise<void>;
       setup(input: { apiKey: string; name: string; consent: boolean }): Promise<Result>;
       saveSettings(settings: { name: string; openAtLogin: boolean; apiKey?: string }): Promise<Result>;
       checkUpdates(): Promise<string>;

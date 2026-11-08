@@ -8,6 +8,8 @@ It runs [Spotify Soloist](https://developer.spotify.com/documentation/soloist), 
 
 ![Now playing, dark mode](docs/screenshots/playing-dark.png)
 
+![First-run setup](docs/screenshots/setup-light.png)
+
 ## Using it
 
 1. Install it on the computer connected to the speaker.
