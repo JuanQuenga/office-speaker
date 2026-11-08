@@ -41,6 +41,14 @@ export interface SpeakerState {
   settings: { name: string; volume: number; openAtLogin: boolean };
   soloist: { version: string | null; buildDate: string | null; daysLeft: number | null };
   hasApiKey: boolean;
+  update: {
+    supported: boolean;
+    status: "idle" | "checking" | "downloading" | "ready" | "available" | "current" | "error";
+    version: string | null;
+    percent: number;
+    error: string;
+    canInstall: boolean;
+  };
   source: "spotify" | "airplay" | "radio" | null;
   radio: {
     station: Station | null;
@@ -79,6 +87,8 @@ declare global {
       radioFavorite(station: Station, on: boolean): Promise<void>;
       openAirPlaySettings(): Promise<void>;
       checkUpdates(): Promise<string>;
+      appUpdateCheck(): Promise<void>;
+      appUpdateInstall(): Promise<void>;
       copyLogs(): Promise<void>;
     };
   }

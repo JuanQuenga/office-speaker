@@ -236,6 +236,16 @@ function Sidebar({
         </button>
       )}
 
+      {(state.update.status === "ready" || state.update.status === "available") && (
+        <button
+          type="button"
+          onClick={() => onNavigate("settings")}
+          className="mx-2.5 mb-2 rounded-lg bg-primary/10 px-2.5 py-1.5 text-left text-xs font-medium text-primary transition-colors hover:bg-primary/15"
+        >
+          Version {state.update.version} is ready
+        </button>
+      )}
+
       <div className="flex items-center justify-between border-t border-foreground/8 px-4 py-2.5 text-[11px] text-muted-foreground">
         <span>Version {state.version}</span>
         <button
@@ -888,6 +898,45 @@ function Row({
   );
 }
 
+function AppUpdateSection({ state }: { state: SpeakerState }) {
+  const { update } = state;
+  if (!update.supported) return null;
+  const description: Record<typeof update.status, string> = {
+    idle: "Checks for new versions automatically",
+    checking: "Checking…",
+    downloading: `Downloading version ${update.version} (${update.percent}%)`,
+    ready: update.canInstall
+      ? `Version ${update.version} is ready. Restarting asks for admin approval.`
+      : `Version ${update.version} is ready`,
+    available: `Version ${update.version} is available to download`,
+    current: "You're on the latest version",
+    error: update.error,
+  };
+  const actionable = update.status === "ready" || update.status === "available";
+  return (
+    <Section title="Office Speaker">
+      <Row label={`Version ${state.version}`} description={description[update.status]}>
+        {actionable ? (
+          <Button type="button" size="sm" onClick={() => window.speaker.appUpdateInstall()}>
+            {update.status === "ready" ? "Restart to update" : "Download…"}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={update.status === "checking" || update.status === "downloading"}
+            onClick={() => window.speaker.appUpdateCheck()}
+          >
+            <Icon icon={Refresh01Icon} className={cn(update.status === "checking" && "animate-spin")} />
+            Check for updates
+          </Button>
+        )}
+      </Row>
+    </Section>
+  );
+}
+
 function Settings({ state }: { state: SpeakerState }) {
   const [name, setName] = useState(state.settings.name);
   const [savingName, setSavingName] = useState(false);
@@ -977,6 +1026,8 @@ function Settings({ state }: { state: SpeakerState }) {
               />
             </Row>
           </Section>
+
+          <AppUpdateSection state={state} />
 
           <Section
             title="AirPlay"

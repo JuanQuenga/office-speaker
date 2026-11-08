@@ -1,7 +1,7 @@
 {
   "name": "office-speaker",
   "productName": "Office Speaker",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Turns this computer into a Spotify Connect speaker anyone on the network can play to, using Spotify Soloist.",
   "main": "src/main.js",
   "private": true,
@@ -13,9 +13,11 @@
     "start": "vite build && electron .",
     "dist:mac": "vite build && electron-builder --mac --arm64 --publish never",
     "dist:win": "vite build && electron-builder --win --x64 --publish never",
-    "dist:linux": "vite build && electron-builder --linux AppImage --publish never"
+    "dist:linux": "vite build && electron-builder --linux AppImage --publish never",
+    "test": "node test/alac-roundtrip.mjs"
   },
   "devDependencies": {
+    "@audio/encode-alac": "^1.0.2",
     "@base-ui/react": "^1.9.0",
     "@fontsource-variable/geist": "^5.3.0",
     "@hugeicons/core-free-icons": "^4.4.0",
@@ -64,7 +66,8 @@
       "minimumSystemVersion": "13.0"
     },
     "dmg": {
-      "title": "Office Speaker"
+      "title": "Office Speaker",
+      "artifactName": "Office-Speaker-${version}-${arch}.${ext}"
     },
     "win": {
       "target": [
@@ -75,14 +78,23 @@
       "oneClick": true,
       "perMachine": true,
       "runAfterFinish": true,
-      "include": "build/installer.nsh"
+      "include": "build/installer.nsh",
+      "artifactName": "Office-Speaker-Setup-${version}.${ext}"
     },
     "linux": {
       "category": "Audio"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "JuanQuenga",
+        "repo": "office-speaker"
+      }
+    ]
   },
   "dependencies": {
     "bonjour-service": "^1.4.4",
+    "electron-updater": "^6.8.11",
     "qrcode": "^1.5.4"
   }
 }

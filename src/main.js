@@ -25,7 +25,8 @@ const QRCode = require("qrcode");
 const { Announcer } = require("./announce");
 const { RadioDirectory, cleanStation, relayStream } = require("./radio");
 const { RemoteServer } = require("./remote");
-const { SoloistInstall, defaultRoot, unsupportedReason } = require("./soloist");
+const { SoloistInstall, defaultRoot, netFetch, unsupportedReason } = require("./soloist");
+const { AppUpdater } = require("./updater");
 
 const isMac = process.platform === "darwin";
 const isWin = process.platform === "win32";
@@ -93,6 +94,7 @@ function writeApiKey(key) {
 
 let settings;
 let install;
+let updater = null;
 let tray = null;
 let win = null;
 let quitting = false;
@@ -159,6 +161,7 @@ function publicState() {
       favorites: settings.radioFavorites ?? [],
       recent: settings.radioRecent ?? [],
     },
+    update: updater?.state() ?? { supported: false, status: "idle", version: null, percent: 0, error: "", canInstall: false },
     remote: { enabled: remoteEnabled(), url: remote?.url() ?? null, qr: remoteQr.url === remote?.url() ? remoteQr.data : null },
     settings: { name: settings.name, volume: settings.volume, openAtLogin: getOpenAtLogin() },
     soloist: {
@@ -184,12 +187,31 @@ function update(patch) {
 // ---------------------------------------------------------------- logs
 
 const engineLog = [];
+let logStream = null;
+
+/** Also keeps a log file in the app's data folder, so problems can be diagnosed after a crash. */
+function writeLogFile(line) {
+  if (!app.isReady()) return;
+  if (!logStream) {
+    const file = path.join(app.getPath("userData"), "logs", "office-speaker.log");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    try {
+      if (fs.statSync(file).size > 2 * 1024 * 1024) fs.renameSync(file, `${file}.old`);
+    } catch {}
+    logStream = fs.createWriteStream(file, { flags: "a" });
+    logStream.on("error", () => {});
+  }
+  logStream.write(`${line}\n`);
+}
+
 function log(line) {
   const apiKey = readApiKey();
   let clean = line.replace(/\x1b\[[0-9;]*m/g, "");
   if (apiKey) clean = clean.split(apiKey).join("[api key]");
-  engineLog.push(`${new Date().toISOString()} ${clean}`);
+  const stamped = `${new Date().toISOString()} ${clean}`;
+  engineLog.push(stamped);
   if (engineLog.length > 500) engineLog.shift();
+  writeLogFile(stamped);
 }
 
 // ---------------------------------------------------------------- engine
@@ -962,6 +984,11 @@ function refreshTray() {
     { label: "Next track", enabled: connected, click: () => command("next") },
     { label: "Disconnect listener", enabled: connected, click: () => command("disconnect") },
     { type: "separator" },
+    ...(updater?.status === "ready"
+      ? [{ label: `Restart to update to ${updater.version}`, click: () => updater.install() }]
+      : updater?.status === "available"
+        ? [{ label: `Download version ${updater.version}…`, click: () => updater.install() }]
+        : []),
     { label: "Open Office Speaker…", click: showWindow },
     {
       label: "Start at login",
@@ -1165,6 +1192,8 @@ ipcMain.handle("save-settings", async (_event, next) => {
 });
 
 ipcMain.handle("check-updates", () => checkForUpdates());
+ipcMain.handle("app-update-check", () => updater?.check());
+ipcMain.handle("app-update-install", () => updater?.install());
 
 ipcMain.handle("copy-logs", () => {
   clipboard.writeText(engineLog.join("\n"));
@@ -1206,6 +1235,7 @@ app.whenReady().then(() => {
     settings.firstRun = false;
     saveSettings();
   }
+  updater = new AppUpdater({ log, netFetch, onChange: () => update({}) });
   createTray();
   startEngine();
   if (settings.consented) startAirPlay();
@@ -1214,6 +1244,8 @@ app.whenReady().then(() => {
   const launchedHidden =
     process.argv.includes("--hidden") || app.getLoginItemSettings({ args: LOGIN_ARGS }).wasOpenedAsHidden;
   if (firstRun || state.status === "setup" || !launchedHidden) showWindow();
+
+  updater.start();
 
   // Keep Soloist current: each build stops working 90 days after it was built.
   setTimeout(() => checkForUpdates(), 60 * 1000);
