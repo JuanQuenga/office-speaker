@@ -67,10 +67,15 @@ Download the `.dmg` (Apple Silicon Mac) or `.exe` (Windows) from [Releases](http
 - **macOS:** open the app, dismiss the warning, then go to System Settings → Privacy & Security → **Open Anyway**. Allow **Local Network** access when asked.
 - **Windows:** SmartScreen shows "Windows protected your PC". Click **More info** → **Run anyway**. The installer asks for admin rights so it can add firewall rules.
 
+## Updates
+
+- **Windows:** new versions download in the background, then **Settings → Restart to update** installs them. Installing asks for admin approval, so it never restarts on its own.
+- **macOS:** builds aren't signed, so they can't update themselves. The app tells you when a new version is out and links to the download.
+
 ## Privacy and network
 
 - **Listening on the network:** Office Speaker listens on the local network for Spotify Connect (through Soloist), AirPlay (Windows, port 5000 when free), and the phone page (port 7979 when free). You can turn off AirPlay and the phone page in Settings.
-- **Outbound connections:** it only talks to Spotify (Soloist downloads and updates), Radio Browser (station search), and the radio stations you play.
+- **Outbound connections:** it only talks to Spotify (Soloist downloads and updates), Radio Browser (station search), the radio stations you play, and GitHub (app updates).
 - **The Soloist API key:** stored encrypted with the OS keychain. It's passed to Soloist on its command line, because that's the only way Soloist accepts it ([spotify/soloist#12](https://github.com/spotify/soloist/issues/12)). That means other users on the same computer could see it in a process list.
 - **Nothing else leaves the computer:** no analytics, telemetry or accounts.
 
@@ -82,7 +87,10 @@ Requirements: Node 24.
 npm install
 npm start          # builds the window with Vite, then launches the app
 npm run typecheck
+npm test           # ALAC decoder round trip
 ```
+
+`test/windows-smoke.mjs` runs in CI on a real Windows machine and must pass before a release. It installs the real installer, then runs setup with the real Soloist download, AirPlay with a scripted sender, radio, the phone page, source takeover, stray-process cleanup, an upgrade, a real auto-update and an uninstall. It can't cover an actual Spotify login, a real iPhone or a real audio device. Results, screenshots and logs are attached to each run.
 
 Layout:
 
@@ -92,6 +100,7 @@ Layout:
 - `renderer/` is the window: React, Tailwind v4, and shadcn components on Base UI (`components.json`, `base-nova` style) with Hugeicons. Vite builds it to `dist-renderer/`, which Electron loads from disk. Add components with `npx shadcn@latest add <name>`.
 - `src/airplay/` is the AirPlay receiver. `raop.js` handles RTSP session control, the Apple-Challenge response, AES-encrypted RTP audio with reordering and resend requests, DMAP metadata, and DACP remote control. `alac.js` is the ALAC decoder. `output.js`, `player.*` play PCM through a Web Audio worklet in a hidden window.
 - `src/radio.js` is the Radio Browser client and the stream relay that reads ICY song titles. `src/remote.js` and `src/remote/index.html` are the phone page and its small API, which also serves the radio relay to this computer only.
+- `src/updater.js` checks GitHub Releases for new versions of the app.
 - `src/preload.js` is the bridge between the window and the main process (`window.speaker`).
 - `OFFICE_SPEAKER_SOLOIST_DIR=/path npm start` keeps Soloist, its data, and its cache in a different folder.
 - `build/installer.nsh` creates Soloist's folder under ProgramData, which users can write to. It also adds the Windows firewall rules.

@@ -331,7 +331,7 @@ await section("Force-killing the app", async () => {
   killApp();
   await sleep(2000);
   const orphans = soloistProcesses().map((p) => p.ProcessId);
-  note("Soloist after a force-kill", `${orphans.length} still running (Windows doesn't stop children)`);
+  note("Soloist after a force-kill", `${orphans.length} still running`);
   launch();
   await connect();
   const ready = await waitFor(async () => {
