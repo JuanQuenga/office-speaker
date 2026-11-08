@@ -159,7 +159,20 @@ function relayStream(url, res, hooks) {
     const request = net.request({ url: target.toString(), redirect: "follow", useSessionCookies: false });
     request.setHeader("Icy-MetaData", "1");
     request.setHeader("User-Agent", hooks.userAgent);
+    // Give up on stations that connect but never answer, or go silent.
+    let watchdog = null;
+    const arm = (ms, message) => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        request.abort();
+        fail(message);
+      }, ms);
+    };
+    arm(15000, "The station didn't respond");
     request.on("response", (response) => {
+      arm(20000, "The station stopped sending audio");
+      response.on("data", () => arm(20000, "The station stopped sending audio"));
+      response.on("end", () => clearTimeout(watchdog));
       const header = (name) => {
         const value = response.headers[name];
         return Array.isArray(value) ? value[0] : value;
@@ -171,8 +184,14 @@ function relayStream(url, res, hooks) {
       }
       relayBody(response, res, header, hooks);
     });
-    request.on("error", (error) => fail(`Couldn't reach the station (${error.message})`));
-    res.on("close", () => request.abort());
+    request.on("error", (error) => {
+      clearTimeout(watchdog);
+      fail(`Couldn't reach the station (${error.message})`);
+    });
+    res.on("close", () => {
+      clearTimeout(watchdog);
+      request.abort();
+    });
     request.end();
     return;
   }

@@ -91,7 +91,18 @@ class SoloistInstall {
     }
   }
 
+  /** Puts back a working build if an interrupted or failed update left it as bin.old. */
+  recover() {
+    const oldBin = `${this.binDir}.old`;
+    if (!fs.existsSync(this.binDir) && fs.existsSync(path.join(oldBin, platform()?.exe ?? "soloist"))) {
+      try {
+        fs.renameSync(oldBin, this.binDir);
+      } catch {}
+    }
+  }
+
   isInstalled() {
+    if (platform()) this.recover();
     return Boolean(platform()) && fs.existsSync(this.exePath) && Boolean(this.meta());
   }
 
@@ -159,6 +170,7 @@ class SoloistInstall {
 
       onProgress("Installing…");
       const oldBin = `${this.binDir}.old`;
+      this.recover(); // never delete the only working build
       await fsp.rm(oldBin, { recursive: true, force: true });
       const hadOld = fs.existsSync(this.binDir);
       if (hadOld) await renameWithRetry(this.binDir, oldBin);
@@ -166,7 +178,16 @@ class SoloistInstall {
         await renameWithRetry(extracted, this.binDir);
       } catch (error) {
         // Put the working build back rather than leaving no Soloist at all.
-        if (hadOld) await renameWithRetry(oldBin, this.binDir).catch(() => {});
+        if (hadOld) {
+          try {
+            await renameWithRetry(oldBin, this.binDir);
+          } catch (restoreError) {
+            // Leave bin.old in place; recover() puts it back on the next check.
+            throw new Error(
+              `Couldn't install the new Soloist (${error.message}), and the old one is waiting in ${oldBin} (${restoreError.message})`,
+            );
+          }
+        }
         throw new Error(`Couldn't install the new Soloist: ${error.message}`);
       }
       await fsp.rm(oldBin, { recursive: true, force: true }).catch(() => {});

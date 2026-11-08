@@ -45,11 +45,23 @@ class RemoteServer {
     });
     this.server = server;
     this.port = await listen(server, PREFERRED_PORT, this.host).catch(() => listen(server, 0, this.host));
-    this.address = this.lan ? ((await routedAddress()) ?? lanAddress()) : null;
+    this.address = this.lan ? await pickAddress() : null;
     this.log(`remote: phone page at ${this.url()}`);
+    if (this.lan) {
+      // Docking, roaming or a new DHCP lease can change the address without a sleep.
+      this.addressTimer = setInterval(async () => {
+        const address = await pickAddress();
+        if (address && address !== this.address) {
+          this.address = address;
+          this.log(`remote: phone page moved to ${this.url()}`);
+          this.handlers.addressChanged?.();
+        }
+      }, 30000);
+    }
   }
 
   stop() {
+    clearInterval(this.addressTimer);
     const server = this.server;
     this.server = null;
     if (!server) return Promise.resolve();
@@ -159,6 +171,21 @@ function isLoopback(address = "") {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
+const VIRTUAL_ADAPTER =
+  /^(lo|docker|br-|veth|virbr|vmnet|vbox|utun|tailscale|tun|tap|zt|wg|awdl|llw|bridge|ppp|ipsec)|vEthernet|VirtualBox|VMware|Hyper-V|WSL|Loopback|VPN|WireGuard|OpenVPN|Tailscale|ZeroTier|Cisco|AnyConnect|GlobalProtect|PANGP|Fortinet|Forti|Zscaler|NordLynx|TAP-/i;
+
+/** The routed address, unless it belongs to a VPN or virtual adapter phones can't reach. */
+async function pickAddress() {
+  const routed = await routedAddress();
+  if (routed) {
+    const owner = Object.entries(os.networkInterfaces()).find(([, addresses]) =>
+      (addresses ?? []).some((a) => a.address === routed),
+    )?.[0];
+    if (owner && !VIRTUAL_ADAPTER.test(owner)) return routed;
+  }
+  return lanAddress();
+}
+
 /**
  * The address the OS would use to reach the internet: the real network adapter,
  * not a Hyper-V, WSL, VPN or Docker one. No packet is sent; UDP connect only routes.
@@ -188,7 +215,7 @@ function routedAddress() {
 function lanAddress() {
   const candidates = [];
   for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
-    if (/^(lo|docker|br-|veth|virbr|vmnet|vbox|utun|tailscale|tun|tap|zt|wg|awdl|llw|bridge)|vEthernet|VirtualBox|VMware|Hyper-V|WSL|Loopback/i.test(name)) continue;
+    if (VIRTUAL_ADAPTER.test(name)) continue;
     for (const address of addresses ?? []) {
       if (address.family !== "IPv4" || address.internal) continue;
       const ip = address.address;

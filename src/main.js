@@ -71,6 +71,8 @@ function saveSettings() {
 let apiKeyCache; // undefined: not read yet
 function readApiKey() {
   if (apiKeyCache !== undefined) return apiKeyCache;
+  // The OS key store isn't usable before the app is ready; don't cache a bad read.
+  if (!app.isReady()) return null;
   try {
     const raw = fs.readFileSync(apiKeyPath());
     apiKeyCache = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString("utf8");
@@ -341,10 +343,17 @@ let starting = null;
 let engineEpoch = 0; // bumped by stopEngine so an unfinished start gives up
 let expiredRestarts = 0;
 function startEngine() {
-  // Collapse overlapping start requests (resume, settings save, crash restart).
-  starting ??= startEngineNow().finally(() => {
-    starting = null;
-  });
+  // A start that began before the latest stop will give up when it notices;
+  // start again once it has, instead of reusing it.
+  if (starting && starting.epoch !== engineEpoch) return starting.then(() => startEngine());
+  // Otherwise collapse overlapping start requests (resume, settings save, crash restart).
+  if (!starting) {
+    const run = startEngineNow().finally(() => {
+      if (starting === run) starting = null;
+    });
+    run.epoch = engineEpoch;
+    starting = run;
+  }
   return starting;
 }
 
@@ -666,6 +675,7 @@ async function startRemote() {
       },
       stop: stopRadio,
       stream: streamRadio,
+      addressChanged: () => refreshQr().catch(() => {}),
       log,
     },
     { lan: remoteEnabled() },
@@ -673,14 +683,19 @@ async function startRemote() {
   remote = server;
   try {
     await server.start();
-    const url = server.url();
-    if (url && remoteQr.url !== url) {
-      remoteQr.url = url;
-      remoteQr.data = await QRCode.toDataURL(url, { margin: 1, width: 320, color: { dark: "#111312", light: "#ffffff" } });
-    }
+    await refreshQr(server);
   } catch (error) {
     log(`remote: couldn't start: ${error.message}`);
     if (remote === server) remote = null;
+  }
+  update({});
+}
+
+async function refreshQr(server = remote) {
+  const url = server?.url();
+  if (url && remoteQr.url !== url) {
+    remoteQr.url = url;
+    remoteQr.data = await QRCode.toDataURL(url, { margin: 1, width: 320, color: { dark: "#111312", light: "#ffffff" } });
   }
   update({});
 }
@@ -1209,9 +1224,7 @@ app.whenReady().then(() => {
     setTimeout(() => {
       restartEngine();
       restartAirPlay();
-      restartRemote().then(() => {
-        if (radioState.active && radioState.status !== "paused") playRadio(radioState.station);
-      });
+      restartRemote(); // also reconnects the radio
     }, 3000),
   );
 });
