@@ -1,0 +1,81 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - name: Build engine (Apple Silicon + Intel)
+        working-directory: engine
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir -p dist
+          lipo -create -output dist/speaker-engine \
+            target/aarch64-apple-darwin/release/speaker-engine \
+            target/x86_64-apple-darwin/release/speaker-engine
+          lipo -info dist/speaker-engine
+      - run: npm ci
+      - run: npx electron-builder --mac --universal --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: office-speaker-mac
+          path: dist/*.dmg
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - name: Build engine
+        working-directory: engine
+        run: |
+          cargo build --release --locked
+          mkdir -p dist
+          cp target/release/speaker-engine.exe dist/
+      - run: npm ci
+      - run: npx electron-builder --win --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: office-speaker-windows
+          path: dist/*.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*

@@ -1,0 +1,72 @@
+{
+  "name": "office-speaker",
+  "productName": "Office Speaker",
+  "version": "0.1.0",
+  "description": "Turns this computer into a Spotify Connect speaker anyone on the network can play to.",
+  "main": "src/main.js",
+  "private": true,
+  "license": "MIT",
+  "author": "Juan Quenga",
+  "scripts": {
+    "engine": "node scripts/build-engine.mjs",
+    "start": "node scripts/build-engine.mjs && electron .",
+    "dist:mac": "electron-builder --mac --universal --publish never",
+    "dist:win": "electron-builder --win --x64 --publish never",
+    "dist:linux": "node scripts/build-engine.mjs && electron-builder --linux AppImage --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "app.officespeaker.desktop",
+    "productName": "Office Speaker",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "engine/dist",
+        "to": "engine",
+        "filter": [
+          "speaker-engine*"
+        ]
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.music",
+      "identity": "-",
+      "x64ArchFiles": "Contents/Resources/engine/*",
+      "extendInfo": {
+        "LSUIElement": true,
+        "NSLocalNetworkUsageDescription": "Office Speaker announces itself on your network so people can pick it in their Spotify app.",
+        "NSBonjourServices": [
+          "_spotify-connect._tcp"
+        ]
+      }
+    },
+    "dmg": {
+      "title": "Office Speaker"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": true,
+      "runAfterFinish": true,
+      "include": "build/installer.nsh"
+    },
+    "linux": {
+      "category": "Audio"
+    }
+  }
+}
