@@ -9,7 +9,6 @@ import {
   MusicNote03Icon,
   NextIcon,
   PauseIcon,
-  PencilEdit02Icon,
   PlayIcon,
   PreviousIcon,
   Refresh01Icon,
@@ -20,7 +19,6 @@ import {
   UserMultipleIcon,
   VolumeHighIcon,
   VolumeLowIcon,
-  Wifi01Icon,
 } from "@hugeicons/core-free-icons";
 
 import appIcon from "./app-icon.png";
@@ -81,7 +79,6 @@ function statusLabel(state: SpeakerState) {
 export function App() {
   const [state, setState] = useState<SpeakerState | null>(null);
   const [page, setPage] = useState<Page>("player");
-  const [focusName, setFocusName] = useState(0);
 
   useEffect(() => {
     const off = window.speaker.onState(setState);
@@ -113,16 +110,11 @@ export function App() {
     return <Setup state={state} />;
   }
 
-  const rename = () => {
-    setPage("settings");
-    setFocusName((n) => n + 1);
-  };
-
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar state={state} page={page} onNavigate={setPage} />
       <main className="flex min-w-0 flex-1 flex-col border-l bg-background">
-        {page === "player" ? <Player state={state} onRename={rename} /> : <Settings state={state} focusName={focusName} />}
+        {page === "player" ? <Player state={state} /> : <Settings state={state} />}
       </main>
     </div>
   );
@@ -370,7 +362,7 @@ function Setup({ state }: { state: SpeakerState }) {
 
 /* ------------------------------------------------------------------ player */
 
-function Player({ state, onRename }: { state: SpeakerState; onRename: () => void }) {
+function Player({ state }: { state: SpeakerState }) {
   const connected = state.status === "connected";
   const cover = connected ? state.track?.cover : null;
   return (
@@ -393,71 +385,29 @@ function Player({ state, onRename }: { state: SpeakerState; onRename: () => void
           <p>{state.message}</p>
         </div>
       )}
-      {connected ? <NowPlaying state={state} /> : <Waiting state={state} onRename={onRename} />}
+      {connected ? <NowPlaying state={state} /> : <Waiting state={state} />}
     </div>
   );
 }
 
-function BroadcastMark({ busy }: { busy: boolean }) {
-  return (
-    <div className="relative grid size-44 place-items-center">
-      {!busy &&
-        [0, 1.2, 2.4].map((delay) => (
-          <span
-            key={delay}
-            className="absolute inset-0 animate-broadcast rounded-full border border-primary/40 bg-primary/5"
-            style={{ animationDelay: `${delay}s` }}
-          />
-        ))}
-      <div className="relative grid size-24 place-items-center rounded-[28px] bg-linear-to-br from-[oklch(0.68_0.13_168)] to-[oklch(0.42_0.09_175)] text-white shadow-xl shadow-primary/25 ring-1 ring-white/20">
-        <Icon icon={busy ? Loading03Icon : Speaker01Icon} className={cn("size-10", busy && "animate-spin")} />
-      </div>
-    </div>
-  );
-}
-
-function Waiting({ state, onRename }: { state: SpeakerState; onRename: () => void }) {
-  const name = state.settings.name;
+function Waiting({ state }: { state: SpeakerState }) {
   const busy = state.status === "starting" || state.status === "expired";
-  const steps: { icon: IconSvgElement; title: string; text: string }[] = [
-    { icon: Wifi01Icon, title: "Join the Wi-Fi", text: "Same network as this computer" },
-    { icon: SmartPhone01Icon, title: "Open Spotify", text: "Tap the devices icon" },
-    { icon: Speaker01Icon, title: "Pick this speaker", text: "Music plays right here" },
-  ];
   return (
-    <>
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-3/4 bg-radial-[at_50%_15%] from-primary/10 to-transparent to-65%" />
-      <div className="relative flex flex-1 flex-col items-center justify-center px-10 pb-4 text-center">
-        <BroadcastMark busy={busy} />
-        <p className="mt-3 text-[11px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-          {busy ? "Starting up" : "Visible in Spotify as"}
-        </p>
-        <p className="mt-1 max-w-full font-heading text-4xl font-semibold tracking-tight break-words">{name}</p>
-        <Button variant="ghost" size="sm" className="mt-2 text-muted-foreground" onClick={onRename}>
-          <Icon icon={PencilEdit02Icon} />
-          Rename
-        </Button>
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-10 pb-12 text-center">
+      <div className="grid aspect-square h-[clamp(160px,36vh,300px)] place-items-center rounded-2xl border bg-muted/50 text-muted-foreground/50">
+        <Icon icon={busy ? Loading03Icon : Speaker01Icon} className={cn("size-12", busy && "animate-spin")} />
       </div>
-      <div className="relative px-8 pb-8">
-        <ol className="mx-auto grid max-w-2xl grid-cols-3 divide-x rounded-2xl border bg-card/60 py-4 backdrop-blur">
-          {steps.map((step, index) => (
-            <li key={step.title} className="flex flex-col items-center gap-1.5 px-4 text-center">
-              <span className="relative grid size-9 place-items-center rounded-full bg-primary/10 text-primary">
-                <Icon icon={step.icon} className="size-4" />
-                <span className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-foreground text-[10px] font-semibold text-background">
-                  {index + 1}
-                </span>
-              </span>
-              <p className="text-[13px] font-medium">{step.title}</p>
-              <p className="text-xs text-muted-foreground">{step.text}</p>
-            </li>
-          ))}
-        </ol>
-        <p className="mt-3 text-center text-xs text-muted-foreground">
-          Free and Premium accounts both work. Whoever picks it last takes over, or they can join the Jam.
+      <div className="max-w-sm">
+        <h2 className="font-heading text-2xl leading-tight font-semibold tracking-tight">
+          {busy ? "Starting…" : "Not playing"}
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          On a phone on this Wi-Fi, open Spotify, tap the devices icon, and pick{" "}
+          <span className="font-medium text-foreground">{state.settings.name}</span>.
         </p>
+        <p className="mt-3 text-xs text-muted-foreground/80">Free and Premium accounts both work.</p>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -642,7 +592,7 @@ function Row({
   );
 }
 
-function Settings({ state, focusName }: { state: SpeakerState; focusName: number }) {
+function Settings({ state }: { state: SpeakerState }) {
   const [name, setName] = useState(state.settings.name);
   const [savingName, setSavingName] = useState(false);
   const [editingKey, setEditingKey] = useState(false);
@@ -658,12 +608,6 @@ function Settings({ state, focusName }: { state: SpeakerState; focusName: number
   useEffect(() => {
     if (!savingName) setName(state.settings.name);
   }, [state.settings.name]);
-
-  useEffect(() => {
-    if (!focusName) return;
-    nameRef.current?.focus();
-    nameRef.current?.select();
-  }, [focusName]);
 
   const save = (patch: { name?: string; openAtLogin?: boolean; apiKey?: string }) =>
     window.speaker.saveSettings({
